@@ -1,8 +1,10 @@
 # certshop
 
-Certshop is an application for Mac, Linux and Windows to generate Private Key Infrastructure (PKI) Certificate Authorities (CA), Intermediate Certificate Authorities (ICA), and x.509 v3 certificates for TLS key exchanges and digital signatures and the certificate portion of OpenVPN config files. All private keys use Elliptic Curve secp384r1, and signatures are ECDSA Signature with SHA-384, which is believed to follow current best practices.
+Certshop is the easy way to create server certificates for web servers; and so much more...
 
-Binaries for Windows, Mac and Linux are available for download at https://github.com/varasys/certshop/releases.
+Certshop is an application for Mac, Linux and Windows to generate Private Key Infrastructure (PKI) Certificate Authorities (CA), Intermediate Certificate Authorities (ICA), and x.509 v3 certificates for TLS key exchanges and digital signatures and the certificate portion of OpenVPN config files. All private keys use Elliptic Curve secp384r1, and signatures are ECDSA Signature with SHA-384, which is believed to follow current best practices. Certshop is written in go and uses go's standard cryptography libraries.
+
+Binaries for Mac, Linux and Windows are available for download at https://github.com/varasys/certshop/releases.
 
 ## Quick Start
 
@@ -22,15 +24,17 @@ certshop server -dn="/CN=host.domain.com"
 certshop client
 ```
 
-Additional hostnames (or IP address, or email addresses) can be specified as Subject Alternative Names using the "-san" flag. The following command creates a server certificate that can be used for both host.domain.**com** and also host.domain.**org**.
+If you ran both examples you would have received errors when running the second example because `certshop` is careful not to accidentally overwrite existing files unless you specify the "-overwrite" option. To successfully run the second example either specify the "-overwrite=true" flag or just delete the "./ca/" directory which was created in the first example. Note that you should never specify "-overwrite=true" for any CA or ICA which has already signed any certificates (since it is a CA for those certificates).
+
+Additional hostnames (or IP address, or email addresses) can be specified as Subject Alternative Names (SAN) using the "-san" flag. The following command creates a server certificate that can be used for both host.domain.**com** and also host.domain.**org**.
 
 ```bash
 certshop server -overwrite -dn="/CN=host.domain.com" -san="127.0.0.1,localhost,host.domain.org"
 ```
 
-Note that the command above 1) uses the "-overwrite" flag since the certificates already exist from the previous step, and 2) includes "127.0.0.1" and "localhost" in the "-san" flag because they are not included by default when the "-san" flag is explicitly provided.
+Note that the command above 1) uses the "-overwrite" flag since the certificates already exist from the previous example, and 2) includes "127.0.0.1" and "localhost" in the "-san" flag because they are not included by default when the "-san" flag is explicitly provided.
 
-The Distinguished Name (-dn) flag expects a quoted list of key value pairs in the form `/key=value` where the following keys are valid (note that "/" is included in the beginning and as a separator between key value pairs):
+The Distinguished Name (DN) can be set with the "-dn" flag which expects a quoted list of key value pairs in the form `/key=value` where the keys listed below are valid. Note that "/" is included in the beginning and as a separator between key value pairs.
 
 - **CN** - Common Name (not inherited)
 - **C** - Country  
@@ -39,7 +43,7 @@ The Distinguished Name (-dn) flag expects a quoted list of key value pairs in th
 - **O** - Organization  
 - **OU** - Organizational Unit  
 
-The Distinguished Name for a certificate is first inherited from the certificate authority which will sign the certificate, and then modified by the -dn flag of the certificate being generated. Inheritance of a value can be masked by leaving the value empty.
+The Distinguished Name for a certificate is first inherited from the certificate authority which will sign the certificate, and then modified by the "-dn" flag of the certificate being generated. Inheritance of a value can be masked by leaving the value empty.
 
 ```bash
 certshop ca -dn="/CA=My CA/O=My Organization/OU=My Organizational Unit"
@@ -58,7 +62,7 @@ certshop command [flags] [path]
 
 Where:
 
-- **command** is one of the following  
+- **command** is one of the following:  
 	- **ca**: create a certificate authority  
 	- **ica**: create an intermediate certificate authority  
 	- **server**: create a server certificate  
@@ -83,7 +87,7 @@ Where:
 	- **-password**: password for the the pkcs12 private key (only used when -p12 = true)  
 	- **-openvpn**: concat the certificate, private key and ca certificate into a text file that can be appended to the end of an openvpn configuration file to embed the certificates directly in the configuration file (default = false)
 
-The **path** is a relative path from the current working folder to the folder to save the certificate, and the folders will be created when the certificate is generated if they don't already exist. CAs will use self-signed certificates and everything else will be signed by the certificate immediately above it in the path. The following default paths are defined for convenience when setting up a simple infrastructure with no ICA, which is why the path wasn't specified in the quick-start instructions.
+The **path** is a relative path from the current working folder to the folder to save the certificate, and the folders will be created when the certificate is generated if they don't already exist. CAs will use self-signed certificates and everything else will be signed by the certificate immediately above it in the path. The following default paths are defined for convenience when setting up a simple infrastructure with no ICA (which is why the path wasn't specified in the first quick-start examples).
 
 - **ca**: ca  
 - **ica**: ca/ica  
@@ -92,10 +96,10 @@ The **path** is a relative path from the current working folder to the folder to
 - **signature**: ca/sign  
 
 ## Using Intermediate Certificate Authorities
-The "-maxPathLength" flag for a certificate authority or intermediate certificate authority limits the depth of subordinate intermediate certificate authorities that can sign certificates. By default -maxPathLength=0. The example below demonstrates the significance of maxPathLength.
+The "-maxPathLength" flag for a certificate authority or intermediate certificate authority limits the depth of subordinate intermediate certificate authorities that can sign certificates. By default "-maxPathLength=0" (so the CA can only sign end certificates and not any ICAs). The example below demonstrates the significance of maxPathLength.
 
 ```bash
-certshop ca -maxPathLength=2 ca
+certshop ca -maxPathLength=2 ca # there can't be more than 2 ICAs under this cert
 certshop ica ca/ica # no problem with this ica
 certshop ica ca/ica/ica2 # no problem with this ica
 certshop ica ca/ica/ica2/ica3 # this will fail because it is nested too deep
@@ -112,7 +116,7 @@ If the certificate is a CA or ICA then it may have further sub-folders for each 
 
 The **ca.pem** file is included because if somebody else is an administrator of an ICA, you could send them the ICA folder for the certificates they are administering and they would be able to use the certshop program to create certificates from that ICA without needing the top level CA key.
 
-Although all certificates and keys are stored in a flat file structure and you can copy the PEM format certificates and keys directly out of the file structure, the `export` command is provided for convenience, and to provide convertion to pkcs12 format and provide a snippet which can be used in an OpenVPN config file.
+Although all certificates and keys are stored in a flat file structure and you can copy the PEM format certificates and keys directly out of the file structure, the `export` command is provided for convenience, to provide conversion to pkcs12 format, and to provide a openvpn config snippet which can be used to embed the certificates and private key directly in an OpenVPN config file.
 
 Refer to the "Flags for the **export** command" section above for a description of all of the export options. By default the flags are: `-crt=true -key=true -ca=true -p12=false -openvpn=false`.
 
@@ -122,11 +126,13 @@ The reason the **export** command writes to stdout instead of saving to a file i
 ssh localhost cd /path/to/ca/folder/parent; certshop create ca/server; certshop export ca/server | tar -zxvC /path/to/cert/destination/folder
 ```
 
+When the "-crt" flag is specified the certificate will be included twice, once with the name according to the path and ".crt" extension, and the other file will be named "cert.pem". Other than the name, the two files are identical. The reason for including two files is because some users will want to a descriptive name, and other users will want a fixed unchanging name (especially when automatically provisioning new servers). The "-key" flag works similar except one file with the name according to the path with a ".key" extension, and the other file will be named "key.pem".
+
 This design was motivated by a need to provide cluster node certificates for kubernetes clusters. With this design, each node can securely connect to a "certificate server" via ssh to run the certshop program and create and download its own certificates.
 
 Note that the `cd` command above uses the folder *above* the top level ca certificate folder (ie. the folder that the ca folder is located in).
 
-To save a compressed tarball with the p12 file locally (as an example), run:
+The following example shows how to export p12 format with the "-p12" and "-password" flags, and also how to pipe (ie. save) the results of the export command to a local ".tgz" file.
 
 ```bash
 certshop export -crt=false -key=false -ca=false -p12=true -password="secret" ca > ca.tgz
@@ -135,13 +141,8 @@ certshop export -crt=false -key=false -ca=false -p12=true -password="secret" ca 
 ## Issues
 
 1. CRL and OCSP revocation is not currently implemented, but probably could be if there is demand for it.  
-2. OpenSSL is called externally when exporting a certificate/key pair in .p12 format, so openssl must be installed and included in the current environment PATH.
+2. OpenSSL is called externally when exporting a certificate/key pair in .p12 format, so openssl must be installed and included in the current PATH (you can check this by confirming the command `which openssl` returns a valid path). Otherwise there are no other external dependencies.  
 
 ## Contribution
 
 Feel free to contribute, ask questions or provide advice at https://github.com/varasys/certshop.
-
-
-
-
-
