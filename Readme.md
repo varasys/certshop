@@ -2,6 +2,8 @@
 
 Certshop is an application for Mac, Linux and Windows to generate Private Key Infrastructure (PKI) Certificate Authorities (CA), Intermediate Certificate Authorities (ICA), and x.509 v3 certificates for TLS key exchanges and digital signatures and the certificate portion of OpenVPN config files. All private keys use Elliptic Curve secp384r1, and signatures are ECDSA Signature with SHA-384, which is believed to follow current best practices.
 
+Binaries for Windows, Mac and Linux are available for download at https://github.com/varasys/certshop/releases.
+
 ## Quick Start
 
 The following three commands will create a certificate authority, server certificate (and private key) and client certificate (and private key). By default, server certificates include "localhost" and "127.0.0.1" as Subject Alternative Names, so the server and client certificates generated below can be used directly assuming the client will only connect from the localhost.
