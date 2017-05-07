@@ -1,6 +1,6 @@
 # certshop
 
-Certshop is an application to generate Private Key Infrastructure (PKI) Certificate Authorities (CA), Intermediate Certificate Authorities (ICA), and x.509 v3 certificates for TLS key exchanges and digital signatures and the certificate portion of OpenVPN config files. All private keys use Elliptic Curve secp384r1, and signatures are ECDSA Signature with SHA-384, which is believed to follow current best practices.
+Certshop is an application for Mac, Linux and Windows to generate Private Key Infrastructure (PKI) Certificate Authorities (CA), Intermediate Certificate Authorities (ICA), and x.509 v3 certificates for TLS key exchanges and digital signatures and the certificate portion of OpenVPN config files. All private keys use Elliptic Curve secp384r1, and signatures are ECDSA Signature with SHA-384, which is believed to follow current best practices.
 
 ## Quick Start
 
@@ -119,6 +119,8 @@ The reason the **export** command writes to stdout instead of saving to a file i
 ```bash
 ssh localhost cd /path/to/ca/folder/parent; certshop create ca/server; certshop export ca/server | tar -zxvC /path/to/cert/destination/folder
 ```
+
+This design was motivated by a need to provide cluster node certificates for kubernetes clusters. With this design, each node can securely connect to a "certificate server" via ssh to run the certshop program and create and download its own certificates.
 
 Note that the `cd` command above uses the folder *above* the top level ca certificate folder (ie. the folder that the ca folder is located in).
 
