@@ -1,6 +1,6 @@
 # certshop
 
-Certshop is an application to generate Private Key Infrastructure (PKI) Certificate Authorities (CA), Intermediate Certificate Authorities (ICA), and x.509 v3 certificates for TLS key exchanges and digital signatures.
+Certshop is an application to generate Private Key Infrastructure (PKI) Certificate Authorities (CA), Intermediate Certificate Authorities (ICA), and x.509 v3 certificates for TLS key exchanges and digital signatures and the certificate portion of OpenVPN config files. All private keys use Elliptic Curve secp384r1, and signatures are ECDSA Signature with SHA-384, which is believed to follow current best practices.
 
 ## Quick Start
 
@@ -108,19 +108,21 @@ One folder is created for each certificate key pair and includes the following f
 
 If the certificate is a CA or ICA then it may have further sub-folders for each of the certificates it has signed.
 
-The **ca.pem** file is included because if somebody else is an administrator for on ICA, you could send them the ICA folder for the certificates they are administering and they would be able to use the certshop program to create certificates from that ICA without needing the top level CA key.
+The **ca.pem** file is included because if somebody else is an administrator of an ICA, you could send them the ICA folder for the certificates they are administering and they would be able to use the certshop program to create certificates from that ICA without needing the top level CA key.
 
-Although all certificates and keys are stored in a flat file structure, and you can copy them directly out of the file structure, the `export` command is provided for convenience.
+Although all certificates and keys are stored in a flat file structure and you can copy the PEM format certificates and keys directly out of the file structure, the `export` command is provided for convenience, and to provide convertion to pkcs12 format and provide a snippet which can be used in an OpenVPN config file.
 
 Refer to the "Flags for the **export** command" section above for a description of all of the export options. By default the flags are: `-crt=true -key=true -ca=true -p12=false -openvpn=false`.
 
 The reason the **export** command writes to stdout instead of saving to a file is to make it easier to remotely connect to a server and create and download new certificates. Assuming you can connect to the computer where the certificates are stored, the following command would connect remotely, create a new server certificate, and download it to the local machine.
 
 ```bash
-ssh localhost cd /path/to/ca/folder; certshop export ca | tar -zxvC /path/to/cert/destination/folder
+ssh localhost cd /path/to/ca/folder/parent; certshop create ca/server; certshop export ca/server | tar -zxvC /path/to/cert/destination/folder
 ```
 
-Or to save the p12 file locally (as an example), run:
+Note that the `cd` command above uses the folder *above* the top level ca certificate folder (ie. the folder that the ca folder is located in).
+
+To save a compressed tarball with the p12 file locally (as an example), run:
 
 ```bash
 certshop export -crt=false -key=false -ca=false -p12=true -password="secret" ca > ca.tgz
