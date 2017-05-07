@@ -2,7 +2,7 @@
 
 Certshop is the easy way to create server certificates for web servers; and so much more...
 
-Certshop is an application for Mac, Linux and Windows to generate Private Key Infrastructure (PKI) Certificate Authorities (CA), Intermediate Certificate Authorities (ICA), and x.509 v3 certificates for TLS key exchanges and digital signatures and the certificate portion of OpenVPN config files. All private keys use Elliptic Curve secp384r1, and signatures are ECDSA Signature with SHA-384, which is believed to follow current best practices. Certshop is written in go and uses go's standard cryptography libraries.
+Certshop is a standalone application for Mac, Linux and Windows to generate Private Key Infrastructure (PKI) Certificate Authorities (CA), Intermediate Certificate Authorities (ICA), and x.509 v3 certificates for TLS key exchanges and digital signatures and the certificate portion of OpenVPN config files. All private keys use Elliptic Curve secp384r1, and signatures are ECDSA Signature with SHA-384, which is believed to follow current best practices. Certshop is written in go and uses go's standard cryptography libraries.
 
 Binaries for Mac, Linux and Windows are available for download at https://github.com/varasys/certshop/releases.
 
@@ -123,8 +123,11 @@ Refer to the "Flags for the **export** command" section above for a description 
 The reason the **export** command writes to stdout instead of saving to a file is to make it easier to remotely connect to a server and create and download new certificates. Assuming you can connect to the computer where the certificates are stored, the following command would connect remotely, create a new server certificate, and download it to the local machine.
 
 ```bash
-ssh localhost cd /path/to/ca/folder/parent; certshop create ca/server; certshop export ca/server | tar -zxvC /path/to/cert/destination/folder
+ssh certserver cd /path/to/ca/folder/parent; certshop create ca/server; certshop export ca/server \
+| tar -zxvC /path/to/cert/destination/folder
 ```
+
+When using automatic provisioning (ie. when creating a cluster), if the provisioner can connect to the machine being provisioned via ssh, and specifies the "-A" ssh flag (ForwardAgent) when connecting, and ssh-agent is running on the provisioner (start it with `ssh-agent && ssh-add`), then the *machine being provisioned* will be able to use the ssh keys from the user account on the provisioning server to connect to other machines (ie. to run `certshop` on a remote machine) even though the ssh keys aren't physically located on the machine being provisioned.  
 
 When the "-crt" flag is specified the certificate will be included twice, once with the name according to the path and ".crt" extension, and the other file will be named "cert.pem". Other than the name, the two files are identical. The reason for including two files is because some users will want to a descriptive name, and other users will want a fixed unchanging name (especially when automatically provisioning new servers). The "-key" flag works similar except one file with the name according to the path with a ".key" extension, and the other file will be named "key.pem".
 
