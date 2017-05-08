@@ -7,50 +7,43 @@ Certshop is a standalone application for Mac, Linux and Windows to generate Priv
 Binaries for Mac, Linux and Windows are available for download at https://github.com/varasys/certshop/releases.
 
 ## Quick Start
-
-The following three commands will create a certificate authority, server certificate (and private key) and client certificate (and private key). By default, server certificates include "localhost" and "127.0.0.1" as Subject Alternative Names, so the server and client certificates generated below can be used directly assuming the client will only connect from the localhost.
-
-```bash
-certshop ca # create certificate authority key and cert
-certshop server # create server key and cert
-certshop client # create client key and cert
-```
-
-In order to connect to the server remotely using a public DNS name, the public DNS name should be used for the Common Name portion the Distinguished Name using the "-dn" flag. The following commands can be used instead of the commands above to create certificates for host "host.domain.com".
+To make a Certificate Authority and a server certificate:
 
 ```bash
-certshop ca
-certshop server -dn="/CN=host.domain.com"
-certshop client
+certshop ca -dn="/CN=My CA/O=My Organization/OU=My Organizational Unit" ca
+certshop server -dn="/CN=host.domain.com" ca/host_domain_com
 ```
 
-If you ran both examples you would have received errors when running the second example because `certshop` is careful not to accidentally overwrite existing files unless you specify the "-overwrite" option. To successfully run the second example either specify the "-overwrite=true" flag or just delete the "./ca/" directory which was created in the first example. Note that you should never specify "-overwrite=true" for any CA or ICA which has already signed any certificates (since it is a CA for those certificates).
+The "ca" private key and certificate will be in the "./ca" folder, and the server private key and certificate will be in the "./ca/host_domain_com" folder (refer to the export command below for other options).
 
-Additional hostnames (or IP address, or email addresses) can be specified as Subject Alternative Names (SAN) using the "-san" flag. The following command creates a server certificate that can be used for both host.domain.**com** and also host.domain.**org**.
+Note that the server Distinguished Name ("-dn" flag) first inherits the DN from the ca, and then overwrites any values specifically provided in the server "-dn" flag, so the final DN for the server is "/CN=host.domain.com/O=My Organization/OU=My Organizational Unit". Inheritance can be blocked by leaving the field empty (ie. -dn="/CN=host.domain.com/OU=" will prevent the OU from being inherited).
+
+ To make additional server or client certificates continue to run the `certshop server` command or `certshop client` command once for each certificate  with the updated DN information.
+ 
+ ```bash
+ # create a second server cert
+ certshop server -dn="/CN=host2.domain.com" ca/server2
+ # create a client cert
+ certshop client -dn="/CN=name of client" ca/name_of_client
+ ```
+ 
+ Subject Alternative Names (SAN) may be provided with the "-san" flag. By default the SAN includes "127.0.0.1" and "localhost", but these won't be included by default if the "-san" flag is supplied, so they should be included in the "-san" flag as shown below.
+ 
+ ```bash
+ # create a server cert for my.domain.com and my.domain.org.
+ certshop server -dn="/CN=my.domain.com" -san="127.0.0.1,localhost,my.domain.org" server3
+ ```
+
+### Intermediate Certificate Authorities
+Intermediate Certificate Authorities are created with the "ica" command.
+
+Updating the first example to include an ICA is shown below.
 
 ```bash
-certshop server -overwrite -dn="/CN=host.domain.com" -san="127.0.0.1,localhost,host.domain.org"
+certshop ca -dn="/CN=My CA/O=My Organization/OU=My Organizational Unit" ca
+certshop ica -dn="/CN=My ICA" ca/ica
+certshop server -dn="/CN=host.domain.com" ca/ica/host_domain_com
 ```
-
-Note that the command above 1) uses the "-overwrite" flag since the certificates already exist from the previous example, and 2) includes "127.0.0.1" and "localhost" in the "-san" flag because they are not included by default when the "-san" flag is explicitly provided.
-
-The Distinguished Name (DN) can be set with the "-dn" flag which expects a quoted list of key value pairs in the form `/key=value` where the keys listed below are valid. Note that "/" is included in the beginning and as a separator between key value pairs.
-
-- **CN** - Common Name (not inherited)
-- **C** - Country  
-- **L** - Locality  
-- **ST** - State or Province  
-- **O** - Organization  
-- **OU** - Organizational Unit  
-
-The Distinguished Name for a certificate is first inherited from the certificate authority which will sign the certificate, and then modified by the "-dn" flag of the certificate being generated. Inheritance of a value can be masked by leaving the value empty.
-
-```bash
-certshop ca -dn="/CA=My CA/O=My Organization/OU=My Organizational Unit"
-certshop server -dn="/CA=host.domain.com/OU="
-```
-
-In the example above, the final distinguished name for the server will be "/CA=host.domain.com/O=My Organization". Note that "O" was inherited from the ca, and that since the server -dn flag includes "OU=" (ie. an empty value) the "OU" value is not inherited and left blank.
 
 ## Detailed Instructions
 
@@ -86,6 +79,28 @@ Where:
 	- **-p12**: include the certificate and private key together in a password protected pkcs12 file (default = false)  
 	- **-password**: password for the the pkcs12 private key (only used when -p12 = true)  
 	- **-openvpn**: concat the certificate, private key and ca certificate into a text file that can be appended to the end of an openvpn configuration file to embed the certificates directly in the configuration file (default = false)
+
+### Distinguished Names
+
+The Distinguished Name (DN) can be set with the "-dn" flag which expects a quoted list of key value pairs in the form `/key=value` where the keys listed below are valid. Note that "/" is included in the beginning and as a separator between key value pairs.
+
+- **CN** - Common Name (not inherited)
+- **C** - Country  
+- **L** - Locality  
+- **ST** - State or Province  
+- **O** - Organization  
+- **OU** - Organizational Unit  
+
+The Distinguished Name for a certificate is first inherited from the certificate authority which will sign the certificate, and then modified by the "-dn" flag of the certificate being generated. Inheritance of a value can be masked by leaving the value empty.
+
+```bash
+certshop ca -dn="/CN=My CA/O=My Organization/OU=My Organizational Unit"
+certshop server -dn="/CN=host.domain.com/OU="
+```
+
+In the example above, the final distinguished name for the server will be "/CA=host.domain.com/O=My Organization". Note that "O" was inherited from the ca, and that since the server -dn flag includes "OU=" (ie. an empty value) the "OU" value is not inherited and left blank.
+
+### Certificate Path
 
 The **path** is a relative path from the current working folder to the folder to save the certificate, and the folders will be created when the certificate is generated if they don't already exist. CAs will use self-signed certificates and everything else will be signed by the certificate immediately above it in the path. The following default paths are defined for convenience when setting up a simple infrastructure with no ICA (which is why the path wasn't specified in the first quick-start examples).
 
