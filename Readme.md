@@ -14,24 +14,26 @@ certshop ca -dn="/CN=My CA/O=My Organization/OU=My Organizational Unit" ca
 certshop server -dn="/CN=host.domain.com" ca/host_domain_com
 ```
 
-The "ca" private key and certificate will be in the "./ca" folder, and the server private key and certificate will be in the "./ca/host_domain_com" folder (refer to the export command below for other options).
+The "ca" private key and certificate will be in the "./ca" folder, and the server private key and certificate will be in the "./ca/host_domain_com" folder (refer to the "export" command below for other options). Every folder will also include a file called "ca.pem" with the ca certificate (without public key).
 
-Note that the server Distinguished Name ("-dn" flag) first inherits the DN from the ca, and then overwrites any values specifically provided in the server "-dn" flag, so the final DN for the server is "/CN=host.domain.com/O=My Organization/OU=My Organizational Unit". Inheritance can be blocked by leaving the field empty (ie. -dn="/CN=host.domain.com/OU=" will prevent the OU from being inherited).
+The server Distinguished Name ("-dn" flag) first inherits the DN from the ca, and then overwrites any values specifically provided in the server "-dn" flag, so the final DN for the server is "/CN=host.domain.com/O=My Organization/OU=My Organizational Unit".
+
+Inheritance can be blocked by leaving the field empty. For instance -dn="/CN=host.domain.com/OU=" will prevent the OU from being inherited.
 
  To make additional server or client certificates continue to run the `certshop server` command or `certshop client` command once for each certificate  with the updated DN information.
  
  ```bash
  # create a second server cert
- certshop server -dn="/CN=host2.domain.com" ca/server2
+ certshop server -dn="/CN=host2.domain.com" ca/host2_domain_com
  # create a client cert
  certshop client -dn="/CN=name of client" ca/name_of_client
  ```
  
- Subject Alternative Names (SAN) may be provided with the "-san" flag. By default the SAN includes "127.0.0.1" and "localhost", but these won't be included by default if the "-san" flag is supplied, so they should be included in the "-san" flag as shown below.
+ Subject Alternative Names (SAN) may be provided with the "-san" flag. By default the SAN includes "127.0.0.1" and "localhost", but these defaults won't be included if the "-san" flag is explicitly supplied, so they should be included in the "-san" flag as shown below if needed.
  
  ```bash
  # create a server cert for my.domain.com and my.domain.org.
- certshop server -dn="/CN=my.domain.com" -san="127.0.0.1,localhost,my.domain.org" server3
+ certshop server -dn="/CN=my.domain.com" -san="127.0.0.1,localhost,my.domain.org" ca/my_domain_com
  ```
 
 ### Intermediate Certificate Authorities
@@ -84,7 +86,7 @@ Where:
 
 The Distinguished Name (DN) can be set with the "-dn" flag which expects a quoted list of key value pairs in the form `/key=value` where the keys listed below are valid. Note that "/" is included in the beginning and as a separator between key value pairs.
 
-- **CN** - Common Name (not inherited)
+- **CN** - Common Name (never inherited)
 - **C** - Country  
 - **L** - Locality  
 - **ST** - State or Province  
@@ -102,7 +104,7 @@ In the example above, the final distinguished name for the server will be "/CA=h
 
 ### Certificate Path
 
-The **path** is a relative path from the current working folder to the folder to save the certificate, and the folders will be created when the certificate is generated if they don't already exist. CAs will use self-signed certificates and everything else will be signed by the certificate immediately above it in the path. The following default paths are defined for convenience when setting up a simple infrastructure with no ICA (which is why the path wasn't specified in the first quick-start examples).
+The **path** is an absolute path or relative path from the current working folder to the folder to save the certificate, and the folders will be created when the certificate is generated if they don't already exist. CAs will use self-signed certificates and everything else will be signed by the certificate immediately above it in the path. The following default paths are defined for convenience when setting up a simple infrastructure with no ICA, but it is recommended to always specify a path.
 
 - **ca**: ca  
 - **ica**: ca/ica  
