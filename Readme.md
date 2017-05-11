@@ -2,7 +2,9 @@
 
 Certshop is the easy way to create server certificates for web servers; and so much more...
 
-Certshop is a standalone application for Mac, Linux and Windows to generate Private Key Infrastructure (PKI) Certificate Authorities (CA), Intermediate Certificate Authorities (ICA), and x.509 v3 certificates for TLS key exchanges and digital signatures and the certificate portion of OpenVPN config files. All private keys use Elliptic Curve secp384r1, and signatures are ECDSA Signature with SHA-384, which is believed to follow current best practices. Certshop is written in go and uses go's standard cryptography libraries.
+Certshop is a standalone application for Mac, Linux and Windows to generate Private Key Infrastructure (PKI) Certificate Authorities (CA), Intermediate Certificate Authorities (ICA), and x.509 v3 certificates for TLS key exchanges and digital signatures and the certificate portion of OpenVPN config files.
+
+All private keys use Elliptic Curve secp384r1, and signatures are ECDSA Signature with SHA-384, which is believed to follow current best practices. Certshop is written in go and uses go's standard cryptography libraries.
 
 Binaries for Mac, Linux and Windows are available for download at https://github.com/varasys/certshop/releases.
 
@@ -14,13 +16,13 @@ certshop ca -dn="/CN=My CA/O=My Organization/OU=My Organizational Unit" ca
 certshop server -dn="/CN=host.domain.com" ca/host_domain_com
 ```
 
-The "ca" private key and certificate will be in the "./ca" folder, and the server private key and certificate will be in the "./ca/host_domain_com" folder (refer to the "export" command below for other options). Every folder will also include a file called "ca.pem" with the ca certificate (without public key).
+The "ca" private key and certificate will be in the "./ca" folder, and the server private key and certificate will be in the "./ca/host_domain_com" folder (refer to the "export" command below for other options). Every folder will also include a file called "ca.pem" with the ca certificate (without private key).
 
 The server Distinguished Name ("-dn" flag) first inherits the DN from the ca, and then overwrites any values specifically provided in the server "-dn" flag, so the final DN for the server is "/CN=host.domain.com/O=My Organization/OU=My Organizational Unit".
 
 Inheritance can be blocked by leaving the field empty. For instance -dn="/CN=host.domain.com/OU=" will prevent the OU from being inherited.
 
- To make additional server or client certificates continue to run the `certshop server` command or `certshop client` command once for each certificate  with the updated DN information.
+To make additional server or client certificates continue to run the `certshop server` command or `certshop client` command once for each certificate with the required DN information.
  
  ```bash
  # create a second server cert
@@ -29,7 +31,7 @@ Inheritance can be blocked by leaving the field empty. For instance -dn="/CN=hos
  certshop client -dn="/CN=name of client" ca/name_of_client
  ```
  
- Subject Alternative Names (SAN) may be provided with the "-san" flag. By default the SAN includes "127.0.0.1" and "localhost", but these defaults won't be included if the "-san" flag is explicitly supplied, so they should be included in the "-san" flag as shown below if needed.
+Subject Alternative Names (SAN) may be provided with the "-san" flag. By default the SAN includes "127.0.0.1" and "localhost", but these defaults won't be included if the "-san" flag is explicitly supplied, so they should be included in the "-san" flag as shown below if needed.
  
  ```bash
  # create a server cert for my.domain.com and my.domain.org.
