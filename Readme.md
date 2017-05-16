@@ -1,4 +1,6 @@
-# certshop
+# kubesec
+
+# Still need to update documentation to reflect updated functionality in kubesec.
 
 Certshop is the easy way to create server certificates for web servers; and so much more...
 
@@ -71,7 +73,7 @@ Where:
 	- **-maxPathLength**: maximum number of subordinate Intermediate Certificate Authorities (ICA) (default = 0)  
 	- **-validity**: number of days the certificate is valid starting from the current time (ca default = 10 years, ica default = 5 years)  
 	- **-overwrite**: whether or not to overwrite existing files when creating certificates (default = false)  
-- Flags for the **server**, **client**, and **signature** command are:  
+- Flags for the **server**, **client**, **peer**, and **signature** command are:  
 	- **-dn**: the Distinguished Name of the certificate (before considering inheritance from the parent ca)  
 	- **-san**: comma separated list of Subject Alternate Names  
 	- **-validity**: number of days the certificate is valid starting from the current time (default = 370 days)  
