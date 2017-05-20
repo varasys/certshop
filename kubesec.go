@@ -53,28 +53,34 @@ func main() {
 	case "ca":
 		manifest := createCA(flag.Args()[1:], "ca", "/CN=ca", 10*(365+5))
 		manifest.save()
+		infoLog.Printf("Finished creating ca in %s\n", filepath.Join(root, manifest.path))
 	case "ica":
 		manifest := createCA(flag.Args()[1:], "ca/ica", "/CN=ica", 5*(365+5))
 		manifest.save()
+		infoLog.Printf("Finished creating ica in %s\n", filepath.Join(root, manifest.path))
 	case "server":
 		manifest := createCertificate(flag.Args()[1:], "ca/server", "/CN=server", "127.0.0.1,localhost,::1", 365+5,
 			x509.KeyUsageDigitalSignature|x509.KeyUsageKeyEncipherment,
 			[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
 		manifest.save()
+		infoLog.Printf("Finished creating server in %s\n", filepath.Join(root, manifest.path))
 	case "client":
 		manifest := createCertificate(flag.Args()[1:], "ca/client", "/CN=client", "127.0.0.1,localhost,::1", 365+5,
 			x509.KeyUsageDigitalSignature|x509.KeyUsageKeyEncipherment,
 			[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
 		manifest.save()
+		infoLog.Printf("Finished creating client in %s\n", filepath.Join(root, manifest.path))
 	case "peer":
 		manifest := createCertificate(flag.Args()[1:], "ca/peer", "/CN=peer", "127.0.0.1,localhost,::1", 365+5,
 			x509.KeyUsageDigitalSignature|x509.KeyUsageKeyEncipherment,
 			[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth})
 		manifest.save()
+		infoLog.Printf("Finished creating peer in %s\n", filepath.Join(root, manifest.path))
 	case "signature":
 		manifest := createCertificate(flag.Args()[1:], "ca/sign", "/CN=sign", "127.0.0.1,localhost,::1", 365+5,
 			x509.KeyUsageDigitalSignature, nil)
 		manifest.save()
+		infoLog.Printf("Finished creating signature cert in %s\n", filepath.Join(root, manifest.path))
 	case "export":
 		exportCertificate(flag.Args()[1:])
 	case "kubernetes":
@@ -194,8 +200,6 @@ func createCA(args []string, path string, defaultDN string, defaultValidity int)
 		manifest.Subject = parseDN(manifest.ca.Subject, *dn)
 	}
 	manifest.AuthorityKeyId = manifest.ca.SubjectKeyId
-
-	// manifest.parseSAN(sans)
 	manifest.sign()
 	return &manifest
 }
