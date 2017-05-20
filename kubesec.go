@@ -109,9 +109,9 @@ func createCertificate(args []string, path, defaultDN, defaultSAN string, defaul
 	}
 	notBefore := time.Now().UTC()
 	manifest := certManifest{
-		path: path,
-		key:  generateKey(),
-		cert: &x509.Certificate{
+		path:       path,
+		PrivateKey: generateKey(),
+		Certificate: &x509.Certificate{
 			IsCA:         false,
 			KeyUsage:     usage,
 			ExtKeyUsage:  extUsage,
@@ -120,15 +120,15 @@ func createCertificate(args []string, path, defaultDN, defaultSAN string, defaul
 			SerialNumber: generateSerial(),
 		},
 	}
-	if id, err := x509.MarshalPKIXPublicKey(manifest.key.Public()); err != nil {
+	if id, err := x509.MarshalPKIXPublicKey(manifest.Public()); err != nil {
 		errorLog.Fatalf("Error marshaling public key")
 	} else {
 		hash := sha1.Sum(id)
-		manifest.cert.SubjectKeyId = hash[:]
+		manifest.SubjectKeyId = hash[:]
 	}
 	manifest.loadCertChain(true)
-	manifest.cert.Subject = parseDN(manifest.ca.cert.Subject, *dn)
-	manifest.cert.AuthorityKeyId = manifest.ca.cert.SubjectKeyId
+	manifest.Subject = parseDN(manifest.ca.Subject, *dn)
+	manifest.AuthorityKeyId = manifest.ca.SubjectKeyId
 	manifest.parseSAN(*san)
 	manifest.sign()
 	return &manifest
@@ -159,9 +159,9 @@ func createCA(args []string, path string, defaultDN string, defaultValidity int)
 	}
 	notBefore := time.Now().UTC()
 	manifest := certManifest{
-		path: path,
-		key:  generateKey(),
-		cert: &x509.Certificate{
+		path:       path,
+		PrivateKey: generateKey(),
+		Certificate: &x509.Certificate{
 			IsCA: true,
 			BasicConstraintsValid: true,
 			MaxPathLen:            *maxPathLength,
@@ -173,27 +173,27 @@ func createCA(args []string, path string, defaultDN string, defaultValidity int)
 			SerialNumber:          generateSerial(),
 		},
 	}
-	if id, err := x509.MarshalPKIXPublicKey(manifest.key.Public()); err != nil {
+	if id, err := x509.MarshalPKIXPublicKey(manifest.Public()); err != nil {
 		errorLog.Fatalf("Error marshaling public key")
 	} else {
 		hash := sha1.Sum(id)
-		manifest.cert.SubjectKeyId = hash[:]
+		manifest.SubjectKeyId = hash[:]
 	}
 	if filepath.Dir(path) == "." { // self signed cert
 		manifest.ca = &certManifest{
-			path: ".",
-			cert: manifest.cert,
-			key:  manifest.key,
+			path:        ".",
+			Certificate: manifest.Certificate,
+			PrivateKey:  manifest.PrivateKey,
 		}
-		manifest.cert.Subject = parseDN(pkix.Name{}, *dn)
+		manifest.Subject = parseDN(pkix.Name{}, *dn)
 	} else {
 		manifest.loadCertChain(true)
-		if manifest.ca.cert.MaxPathLen < 1 || manifest.cert.MaxPathLen > (manifest.ca.cert.MaxPathLen-1) {
+		if manifest.ca.MaxPathLen < 1 || manifest.MaxPathLen > (manifest.ca.MaxPathLen-1) {
 			errorLog.Fatalf("Max Path Length of ca exceeded")
 		}
-		manifest.cert.Subject = parseDN(manifest.ca.cert.Subject, *dn)
+		manifest.Subject = parseDN(manifest.ca.Subject, *dn)
 	}
-	manifest.cert.AuthorityKeyId = manifest.ca.cert.SubjectKeyId
+	manifest.AuthorityKeyId = manifest.ca.SubjectKeyId
 
 	// manifest.parseSAN(sans)
 	manifest.sign()

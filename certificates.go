@@ -19,9 +19,9 @@ import (
 type certManifest struct {
 	path string // path of new certificate directory relative to root
 
-	ca   *certManifest
-	cert *x509.Certificate
-	key  *ecdsa.PrivateKey
+	ca *certManifest
+	*x509.Certificate
+	*ecdsa.PrivateKey
 }
 
 func generateSerial() *big.Int {
@@ -81,11 +81,11 @@ func (manifest *certManifest) parseSAN(sans string) {
 	debugLog.Printf("Parsing Subject Alternative Names: %s\n", sans)
 	for _, h := range strings.Split(sans, ",") {
 		if ip := net.ParseIP(h); ip != nil {
-			manifest.cert.IPAddresses = append(manifest.cert.IPAddresses, ip)
+			manifest.IPAddresses = append(manifest.IPAddresses, ip)
 		} else if email := parseEmailAddress(h); email != nil {
-			manifest.cert.EmailAddresses = append(manifest.cert.EmailAddresses, email.Address)
+			manifest.EmailAddresses = append(manifest.EmailAddresses, email.Address)
 		} else {
-			manifest.cert.DNSNames = append(manifest.cert.DNSNames, h)
+			manifest.DNSNames = append(manifest.DNSNames, h)
 		}
 	}
 }
@@ -106,9 +106,9 @@ func parseEmailAddress(address string) (email *mail.Address) {
 }
 
 func (manifest *certManifest) sign() {
-	manifest.cert.PublicKeyAlgorithm = x509.ECDSA
-	manifest.cert.SignatureAlgorithm = x509.ECDSAWithSHA384
-	der, err := x509.CreateCertificate(rand.Reader, manifest.cert, manifest.ca.cert, manifest.key.Public(), manifest.ca.key)
+	manifest.PublicKeyAlgorithm = x509.ECDSA
+	manifest.SignatureAlgorithm = x509.ECDSAWithSHA384
+	der, err := x509.CreateCertificate(rand.Reader, manifest.Certificate, manifest.ca.Certificate, manifest.Public(), manifest.ca.PrivateKey)
 	if err != nil {
 		errorLog.Fatalf("Failed to sign certificate: %s", err)
 	}
@@ -116,7 +116,7 @@ func (manifest *certManifest) sign() {
 	if err != nil {
 		errorLog.Fatalf("Failed to load signed certificate: %s", err)
 	}
-	manifest.cert = cert
+	manifest.Certificate = cert
 }
 
 func (manifest *certManifest) save() {
@@ -137,7 +137,7 @@ func (manifest *certManifest) saveCert(path string) {
 		}
 	}()
 	for manifest != nil && manifest.path != "." {
-		if _, err := file.Write(marshalCert(manifest.cert)); err != nil {
+		if _, err := file.Write(marshalCert(manifest.Certificate)); err != nil {
 			errorLog.Fatalf("Failed to concat certificate %s: %s", filepath.Join(root, manifest.path), err)
 		}
 		manifest = manifest.ca
@@ -146,7 +146,7 @@ func (manifest *certManifest) saveCert(path string) {
 
 func (manifest *certManifest) saveKey(path string) {
 	debugLog.Printf("Saving private key: %s\n", filepath.Join(root, path))
-	if err := ioutil.WriteFile(path, marshalKey(manifest.key), os.FileMode(0600)); err != nil {
+	if err := ioutil.WriteFile(path, marshalKey(manifest.PrivateKey), os.FileMode(0600)); err != nil {
 		errorLog.Fatalf("Failed to save private key %s: %s", path, err)
 	}
 }
@@ -208,11 +208,11 @@ func (manifest *certManifest) loadCertChain(includeKey bool) {
 		file := filepath.Dir(manifest.path)
 		file = filepath.Join(file, filepath.Base(file))
 		manifest.ca = &certManifest{
-			path: filepath.Dir(manifest.path),
-			cert: readCert(file + ".pem"),
+			path:        filepath.Dir(manifest.path),
+			Certificate: readCert(file + ".pem"),
 		}
 		if includeKey {
-			manifest.ca.key = readKey(file + "-key.pem")
+			manifest.ca.PrivateKey = readKey(file + "-key.pem")
 		}
 		manifest.ca.loadCertChain(false)
 	}
