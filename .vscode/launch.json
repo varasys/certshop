@@ -9,7 +9,7 @@
             "program": "${workspaceRoot}"
         },
         {
-            "name": "Launch",
+            "name": "Create CA",
             "type": "go",
             "request": "launch",
             "mode": "debug",
@@ -18,7 +18,20 @@
             "host": "127.0.0.1",
             "program": "${fileDirname}",
             "env": {},
-            "args": ["ca", "ca"],
+            "args": ["-overwrite", "ca", "-dn=/CN=test ca/O=ACME/OU=skunk", "-maxPathLength=2", "ca"],
+            "showLog": true
+        },
+        {
+            "name": "Create ICA",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "remotePath": "",
+            "port": 2345,
+            "host": "127.0.0.1",
+            "program": "${fileDirname}",
+            "env": {},
+            "args": ["ica", "-maxPathLength=0", "ca/ica"],
             "showLog": true
         }
     ]

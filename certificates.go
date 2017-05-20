@@ -16,19 +16,16 @@ import (
 	"strings"
 )
 
-var serialNumberLimit = new(big.Int).Lsh(big.NewInt(1), 128)
-
 type certManifest struct {
 	path string // path of new certificate directory relative to root
 
-	cert        *x509.Certificate
-	key         *ecdsa.PrivateKey
-	signingCert *x509.Certificate
-	signingKey  *ecdsa.PrivateKey
+	ca   *certManifest
+	cert *x509.Certificate
+	key  *ecdsa.PrivateKey
 }
 
 func generateSerial() *big.Int {
-	serial, err := rand.Int(rand.Reader, serialNumberLimit)
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		errorLog.Fatalf("Failed to generate serial number: %s", err)
 	}
@@ -47,45 +44,31 @@ func parseDN(issuer pkix.Name, dn string) pkix.Name {
 	infoLog.Printf("Parsing Distinguished Name: %s\n", dn)
 	issuer.CommonName = ""
 	for _, element := range strings.Split(strings.Trim(dn, "/"), "/") {
-		value := strings.Split(element, "=")
-		if len(value) != 2 {
+		pair := strings.Split(element, "=")
+		if len(pair) != 2 {
 			errorLog.Fatalf("Failed to parse distinguised name: malformed element %s in dn", element)
 		}
-		switch strings.ToUpper(value[0]) {
-		case "CN": // commonName
-			issuer.CommonName = value[1]
-		case "C": // countryName
-			if value[1] != "" {
-				issuer.Country = value[1:1]
-			} else {
-				issuer.Country = nil
+		if strings.ToUpper(pair[0]) == "CN" {
+			issuer.CommonName = pair[1]
+		} else {
+			value := []string{}
+			if pair[1] != "" {
+				value = append(value, pair[1])
 			}
-		case "L": // localityName
-			if value[1] != "" {
-				issuer.Locality = value[1:1]
-			} else {
-				issuer.Locality = nil
+			switch strings.ToUpper(pair[0]) {
+			case "C": // countryName
+				issuer.Country = value
+			case "L": // localityName
+				issuer.Locality = value
+			case "ST": // stateOrProvinceName
+				issuer.Province = value
+			case "O": // organizationName
+				issuer.Organization = value
+			case "OU": // organizationalUnitName
+				issuer.OrganizationalUnit = value
+			default:
+				errorLog.Fatalf("Failed to parse distinguised name: unknown element %s", element)
 			}
-		case "ST": // stateOrProvinceName
-			if value[1] != "" {
-				issuer.Province = value[1:1]
-			} else {
-				issuer.Province = nil
-			}
-		case "O": // organizationName
-			if value[1] != "" {
-				issuer.Organization = value[1:1]
-			} else {
-				issuer.Organization = nil
-			}
-		case "OU": // organizationalUnitName
-			if value[1] != "" {
-				issuer.OrganizationalUnit = value[1:1]
-			} else {
-				issuer.OrganizationalUnit = nil
-			}
-		default:
-			errorLog.Fatalf("Failed to parse distinguised name: unknown element %s", element)
 		}
 	}
 	if issuer.CommonName == "" {
@@ -123,12 +106,13 @@ func parseEmailAddress(address string) (email *mail.Address) {
 }
 
 func (manifest *certManifest) sign() {
-	//manifest.cert.SignatureAlgorithm = x509.ECDSAWithSHA384
-	derCert, err := x509.CreateCertificate(rand.Reader, manifest.cert, manifest.signingCert, manifest.key.Public(), manifest.signingKey)
+	manifest.cert.PublicKeyAlgorithm = x509.ECDSA
+	manifest.cert.SignatureAlgorithm = x509.ECDSAWithSHA384
+	der, err := x509.CreateCertificate(rand.Reader, manifest.cert, manifest.ca.cert, manifest.key.Public(), manifest.ca.key)
 	if err != nil {
 		errorLog.Fatalf("Failed to sign certificate: %s", err)
 	}
-	cert, err := x509.ParseCertificate(derCert)
+	cert, err := x509.ParseCertificate(der)
 	if err != nil {
 		errorLog.Fatalf("Failed to load signed certificate: %s", err)
 	}
@@ -143,8 +127,20 @@ func (manifest *certManifest) save() {
 
 func (manifest *certManifest) saveCert(path string) {
 	infoLog.Printf("Saving certificate: %s\n", filepath.Join(root, path))
-	if err := ioutil.WriteFile(path, marshalCert(manifest.cert), os.FileMode(0644)); err != nil {
-		errorLog.Fatalf("Failed to save certificate %s: %s", path, err)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, os.FileMode(0644))
+	if err != nil {
+		errorLog.Fatalf("Failed to open %s for writing: %s", filepath.Join(root, path), err)
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			errorLog.Fatalf("Failed to close %s: %s", filepath.Join(root, path), err)
+		}
+	}()
+	for manifest != nil && manifest.path != "." {
+		if _, err := file.Write(marshalCert(manifest.cert)); err != nil {
+			errorLog.Fatalf("Failed to concat certificate %s: %s", filepath.Join(root, manifest.path), err)
+		}
+		manifest = manifest.ca
 	}
 }
 
@@ -158,15 +154,15 @@ func (manifest *certManifest) saveKey(path string) {
 func readCert(path string) *x509.Certificate {
 	der, err := ioutil.ReadFile(path)
 	if err != nil {
-		errorLog.Fatalf("Failed to read certificate file %s: %s", filepath.Join(path, filepath.Base(path)+".crt"), err)
+		errorLog.Fatalf("Failed to read certificate file %s: %s", filepath.Join(root, path), err)
 	}
 	return unMarshalCert(der)
 }
 
 func readKey(path string) *ecdsa.PrivateKey {
-	der, err := ioutil.ReadFile(path + "-key.pem")
+	der, err := ioutil.ReadFile(path)
 	if err != nil {
-		errorLog.Fatalf("Failed to read private key file %s: %s", filepath.Join(path, filepath.Base(path)+".key"), err)
+		errorLog.Fatalf("Failed to read private key file %s: %s", filepath.Join(root, path), err)
 	}
 	return unMarshalKey(der)
 }
@@ -205,4 +201,19 @@ func unMarshalKey(der []byte) *ecdsa.PrivateKey {
 		errorLog.Fatalf("Failed to parse private key: %s", err)
 	}
 	return key
+}
+
+func (manifest *certManifest) loadCertChain(includeKey bool) {
+	if filepath.Dir(manifest.path) != "." {
+		file := filepath.Dir(manifest.path)
+		file = filepath.Join(file, filepath.Base(file))
+		manifest.ca = &certManifest{
+			path: filepath.Dir(manifest.path),
+			cert: readCert(file + ".pem"),
+		}
+		if includeKey {
+			manifest.ca.key = readKey(file + "-key.pem")
+		}
+		manifest.ca.loadCertChain(false)
+	}
 }
