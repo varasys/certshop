@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"flag"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 var (
 	infoLog   = log.New(os.Stderr, "", 0)
+	debugLog  = log.New(ioutil.Discard, "", 0)
 	errorLog  = log.New(os.Stderr, "ERROR: ", log.Lshortfile)
 	root      string
 	overwrite bool
@@ -22,14 +24,18 @@ var (
 func main() {
 	flag.StringVar(&root, "root", "./", "path to root directory (default=\"./\")")
 	flag.BoolVar(&overwrite, "overwrite", false, "overwrite existing directories (default=false)")
+	debug := flag.Bool("debug", false, "show extra debug information (default=false)")
 	flag.Parse()
 
+	if *debug {
+		debugLog = log.New(os.Stderr, "", 0)
+	}
 	if absRoot, err := filepath.Abs(root); err != nil {
 		errorLog.Fatalf("Failed to parse root directory %s: %s", root, err)
 	} else {
 		root = absRoot
 	}
-	infoLog.Printf("Using root directory: %s", root)
+	debugLog.Printf("Using root directory: %s", root)
 	if err := os.MkdirAll(root, os.FileMode(0755)); err != nil {
 		errorLog.Fatalf("Failed to create root directory %s: %s", root, err)
 	}
@@ -45,38 +51,90 @@ func main() {
 	}
 	switch subCommand {
 	case "ca":
-		createCA(flag.Args()[1:], "ca", "/CN=ca", 10*365+5)
+		manifest := createCA(flag.Args()[1:], "ca", "/CN=ca", 10*(365+5))
+		manifest.save()
 	case "ica":
-		createCA(flag.Args()[1:], "ca/ica", "/CN=ica", 5*365+5)
+		manifest := createCA(flag.Args()[1:], "ca/ica", "/CN=ica", 5*(365+5))
+		manifest.save()
 	case "server":
-		createCertificate(flag.Args()[1:], "ca/server", "/CN=server", 365+5,
+		manifest := createCertificate(flag.Args()[1:], "ca/server", "/CN=server", "127.0.0.1,localhost,::1", 365+5,
 			x509.KeyUsageDigitalSignature|x509.KeyUsageKeyEncipherment,
 			[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+		manifest.save()
 	case "client":
-		createCertificate(flag.Args()[1:], "ca/client", "/CN=client", 365+5,
+		manifest := createCertificate(flag.Args()[1:], "ca/client", "/CN=client", "127.0.0.1,localhost,::1", 365+5,
 			x509.KeyUsageDigitalSignature|x509.KeyUsageKeyEncipherment,
 			[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+		manifest.save()
 	case "peer":
-		createCertificate(flag.Args()[1:], "ca/peer", "/CN=peer", 365+5,
+		manifest := createCertificate(flag.Args()[1:], "ca/peer", "/CN=peer", "127.0.0.1,localhost,::1", 365+5,
 			x509.KeyUsageDigitalSignature|x509.KeyUsageKeyEncipherment,
 			[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth})
+		manifest.save()
 	case "signature":
-		createCertificate(flag.Args()[1:], "ca/sign", "/CN=sign", 365+5,
+		manifest := createCertificate(flag.Args()[1:], "ca/sign", "/CN=sign", "127.0.0.1,localhost,::1", 365+5,
 			x509.KeyUsageDigitalSignature, nil)
+		manifest.save()
 	case "export":
 		exportCertificate(flag.Args()[1:])
 	case "kubernetes":
 		createKubernetes(flag.Args()[1:])
 	default:
-		infoLog.Println("Usage: certshop ca | ica | server | client | signature | export")
+		debugLog.Println("Usage: certshop ca | ica | server | client | signature | export")
 	}
 }
 
-func createCertificate(args []string, path string, defaultDN string, defaultValidity int, usage x509.KeyUsage, extUsage []x509.ExtKeyUsage) {
+func createCertificate(args []string, path, defaultDN, defaultSAN string, defaultValidity int, usage x509.KeyUsage, extUsage []x509.ExtKeyUsage) *certManifest {
+	fs := flag.NewFlagSet("command", flag.PanicOnError)
+	dn := fs.String("dn", defaultDN, "certificate subject")
+	san := fs.String("san", defaultSAN, "subject alternative names")
+	validity := fs.Int("validity", defaultValidity, "certificate duration in days")
 
+	if err := fs.Parse(args); err != nil {
+		errorLog.Fatalf("Failed to parse command line arguments: %s", err)
+	}
+	if len(fs.Args()) > 1 {
+		errorLog.Fatalf("Invalid path %s", strings.Join(fs.Args(), ","))
+	} else if len(fs.Args()) == 1 {
+		path = filepath.Clean(fs.Arg(0))
+	}
+	debugLog.Printf("Creating Certificate %s with Subject: %s\n", path, *dn)
+	if !overwrite {
+		if _, err := os.Stat(path); err == nil {
+			errorLog.Fatalf("Error: directory %s exists, use -overwrite flag to overwrite.", filepath.Join(root, path))
+		}
+	}
+	if err := os.MkdirAll(path, os.FileMode(0755)); err != nil {
+		errorLog.Fatalf("Failed to create directory %s: %s", path, err)
+	}
+	notBefore := time.Now().UTC()
+	manifest := certManifest{
+		path: path,
+		key:  generateKey(),
+		cert: &x509.Certificate{
+			IsCA:         false,
+			KeyUsage:     usage,
+			ExtKeyUsage:  extUsage,
+			NotBefore:    notBefore,
+			NotAfter:     notBefore.Add(time.Duration(*validity*24) * time.Hour),
+			SerialNumber: generateSerial(),
+		},
+	}
+	if id, err := x509.MarshalPKIXPublicKey(manifest.key.Public()); err != nil {
+		errorLog.Fatalf("Error marshaling public key")
+	} else {
+		hash := sha1.Sum(id)
+		manifest.cert.SubjectKeyId = hash[:]
+	}
+	manifest.loadCertChain(true)
+	manifest.cert.Subject = parseDN(manifest.ca.cert.Subject, *dn)
+	manifest.cert.AuthorityKeyId = manifest.ca.cert.SubjectKeyId
+	manifest.parseSAN(*san)
+	manifest.sign()
+	return &manifest
 }
 
-func createCA(args []string, path string, defaultDN string, defaultValidity int) {
+func createCA(args []string, path string, defaultDN string, defaultValidity int) *certManifest {
 	fs := flag.NewFlagSet("command", flag.PanicOnError)
 	dn := fs.String("dn", defaultDN, "certificate subject")
 	maxPathLength := fs.Int("maxPathLength", 0, "max path length")
@@ -90,7 +148,7 @@ func createCA(args []string, path string, defaultDN string, defaultValidity int)
 	} else if len(fs.Args()) == 1 {
 		path = filepath.Clean(fs.Arg(0))
 	}
-	infoLog.Printf("Creating Certificate Authority %s with Subject: %s\n", path, *dn)
+	debugLog.Printf("Creating Certificate Authority %s with Subject: %s\n", path, *dn)
 	if !overwrite {
 		if _, err := os.Stat(path); err == nil {
 			errorLog.Fatalf("Error: directory %s exists, use -overwrite flag to overwrite.", filepath.Join(root, path))
@@ -139,5 +197,5 @@ func createCA(args []string, path string, defaultDN string, defaultValidity int)
 
 	// manifest.parseSAN(sans)
 	manifest.sign()
-	manifest.save()
+	return &manifest
 }

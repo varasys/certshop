@@ -41,7 +41,7 @@ func generateKey() *ecdsa.PrivateKey {
 }
 
 func parseDN(issuer pkix.Name, dn string) pkix.Name {
-	infoLog.Printf("Parsing Distinguished Name: %s\n", dn)
+	debugLog.Printf("Parsing Distinguished Name: %s\n", dn)
 	issuer.CommonName = ""
 	for _, element := range strings.Split(strings.Trim(dn, "/"), "/") {
 		pair := strings.Split(element, "=")
@@ -78,7 +78,7 @@ func parseDN(issuer pkix.Name, dn string) pkix.Name {
 }
 
 func (manifest *certManifest) parseSAN(sans string) {
-	infoLog.Printf("Parsing Subject Alternative Names: %s\n", sans)
+	debugLog.Printf("Parsing Subject Alternative Names: %s\n", sans)
 	for _, h := range strings.Split(sans, ",") {
 		if ip := net.ParseIP(h); ip != nil {
 			manifest.cert.IPAddresses = append(manifest.cert.IPAddresses, ip)
@@ -126,7 +126,7 @@ func (manifest *certManifest) save() {
 }
 
 func (manifest *certManifest) saveCert(path string) {
-	infoLog.Printf("Saving certificate: %s\n", filepath.Join(root, path))
+	debugLog.Printf("Saving certificate: %s\n", filepath.Join(root, path))
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, os.FileMode(0644))
 	if err != nil {
 		errorLog.Fatalf("Failed to open %s for writing: %s", filepath.Join(root, path), err)
@@ -145,7 +145,7 @@ func (manifest *certManifest) saveCert(path string) {
 }
 
 func (manifest *certManifest) saveKey(path string) {
-	infoLog.Printf("Saving private key: %s\n", filepath.Join(root, path))
+	debugLog.Printf("Saving private key: %s\n", filepath.Join(root, path))
 	if err := ioutil.WriteFile(path, marshalKey(manifest.key), os.FileMode(0600)); err != nil {
 		errorLog.Fatalf("Failed to save private key %s: %s", path, err)
 	}
