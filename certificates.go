@@ -48,14 +48,15 @@ func parseDN(issuer pkix.Name, dn string) pkix.Name {
 		if len(pair) != 2 {
 			errorLog.Fatalf("Failed to parse distinguised name: malformed element %s in dn", element)
 		}
-		if strings.ToUpper(pair[0]) == "CN" {
+		pair[0] = strings.ToUpper(pair[0])
+		if pair[0] == "CN" {
 			issuer.CommonName = pair[1]
 		} else {
 			value := []string{}
 			if pair[1] != "" {
 				value = append(value, pair[1])
 			}
-			switch strings.ToUpper(pair[0]) {
+			switch pair[0] {
 			case "C": // countryName
 				issuer.Country = value
 			case "L": // localityName
