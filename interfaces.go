@@ -62,7 +62,7 @@ func (writer *fileWriter) writeData(data *[]byte, path string, perms os.FileMode
 	if !overwrite {
 		flags = flags | os.O_EXCL
 		if _, err := os.Stat(path); err == nil {
-			errorLog.Fatalf("Failed: file %s alread exists (use -overwrite to overwrite)", path)
+			errorLog.Fatalf("File %s alread exists (use -overwrite to overwrite)", path)
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), os.FileMode(0755)); err != nil {

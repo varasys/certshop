@@ -17,7 +17,7 @@ import (
 var (
 	infoLog   = log.New(os.Stderr, "", 0)
 	debugLog  = log.New(ioutil.Discard, "", 0)
-	errorLog  = log.New(os.Stderr, "ERROR: ", log.Lshortfile)
+	errorLog  = log.New(os.Stderr, "Error: ", 0)
 	root      string
 	overwrite bool
 	runTime   time.Time
@@ -31,7 +31,8 @@ func main() {
 	flag.Parse()
 
 	if *debug {
-		debugLog = log.New(os.Stderr, "", 0)
+		debugLog = log.New(os.Stderr, "", log.Lshortfile)
+		errorLog.SetFlags(log.Lshortfile)
 	}
 	if absRoot, err := filepath.Abs(root); err != nil {
 		errorLog.Fatalf("Failed to parse root directory %s: %s", root, err)
@@ -94,6 +95,9 @@ func main() {
 			manifest.save(writer)
 		}
 		infoLog.Printf("Finished creating certificate signing request")
+	case "key":
+		key := generateKey()
+		saveKey(newTgzWriter(os.Stdout), key, "key.pem")
 	case "export":
 		exportCertificate(flag.Args()[1:])
 	case "kubernetes":
@@ -120,7 +124,7 @@ func createCertificate(args []string, path, defaultDN, defaultSAN string, defaul
 	debugLog.Printf("Creating Certificate %s with Subject: %s\n", path, *dn)
 	if !overwrite {
 		if _, err := os.Stat(path); err == nil {
-			errorLog.Fatalf("Error: directory %s exists, use -overwrite flag to overwrite.", filepath.Join(root, path))
+			errorLog.Fatalf("Directory %s exists, use -overwrite flag to overwrite.", filepath.Join(root, path))
 		}
 	}
 	if err := os.MkdirAll(path, os.FileMode(0755)); err != nil {
@@ -143,7 +147,7 @@ func createCertificate(args []string, path, defaultDN, defaultSAN string, defaul
 		},
 	}
 	if id, err := x509.MarshalPKIXPublicKey(manifest.Public()); err != nil {
-		errorLog.Fatalf("Error marshaling public key")
+		errorLog.Fatalf("Failed to marshal public key")
 	} else {
 		hash := sha1.Sum(id)
 		manifest.SubjectKeyId = hash[:]
@@ -172,7 +176,7 @@ func createCA(args []string, path string, defaultDN string, defaultValidity int)
 	debugLog.Printf("Creating Certificate Authority %s with Subject: %s\n", path, *dn)
 	if !overwrite {
 		if _, err := os.Stat(path); err == nil {
-			errorLog.Fatalf("Error: directory %s exists, use -overwrite flag to overwrite.", filepath.Join(root, path))
+			errorLog.Fatalf("Directory %s exists, use -overwrite flag to overwrite.", filepath.Join(root, path))
 		}
 	}
 	if err := os.MkdirAll(path, os.FileMode(0755)); err != nil {
@@ -194,7 +198,7 @@ func createCA(args []string, path string, defaultDN string, defaultValidity int)
 		},
 	}
 	if id, err := x509.MarshalPKIXPublicKey(manifest.Public()); err != nil {
-		errorLog.Fatalf("Error marshaling public key")
+		errorLog.Fatalf("Failed to marshal public key")
 	} else {
 		hash := sha1.Sum(id)
 		manifest.SubjectKeyId = hash[:]
@@ -209,7 +213,7 @@ func createCA(args []string, path string, defaultDN string, defaultValidity int)
 	} else {
 		manifest.loadCertChain(true)
 		if manifest.ca.MaxPathLen < 1 || manifest.MaxPathLen > (manifest.ca.MaxPathLen-1) {
-			errorLog.Fatalf("Max Path Length of ca exceeded")
+			errorLog.Fatalf("Maximum Path Length of certificate authority exceeded")
 		}
 		manifest.Subject = *parseDN(manifest.ca.Subject, dn)
 	}
@@ -227,7 +231,7 @@ func createCSR(args []string) *csrManifest {
 		errorLog.Fatalf("Failed to parse command line arguments: %s", err)
 	}
 	if *dn == "" {
-		errorLog.Fatalf("Error: Distinguished Name required (ie. -dn=\"/CN=ACME\")")
+		errorLog.Fatalf("Distinguished Name required (ie. -dn=\"/CN=ACME\")")
 	}
 	var path string
 	switch len(fs.Args()) {
