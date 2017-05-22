@@ -55,10 +55,10 @@ func generateKey() *ecdsa.PrivateKey {
 	return key
 }
 
-func parseDN(issuer pkix.Name, dn string) pkix.Name {
-	debugLog.Printf("Parsing Distinguished Name: %s\n", dn)
+func parseDN(issuer pkix.Name, dn *string) *pkix.Name {
+	debugLog.Printf("Parsing Distinguished Name: %s\n", *dn)
 	issuer.CommonName = ""
-	for _, element := range strings.Split(strings.Trim(dn, "/"), "/") {
+	for _, element := range strings.Split(strings.Trim(*dn, "/"), "/") {
 		pair := strings.Split(element, "=")
 		if len(pair) != 2 {
 			errorLog.Fatalf("Failed to parse distinguised name: malformed element %s in dn", element)
@@ -88,15 +88,15 @@ func parseDN(issuer pkix.Name, dn string) pkix.Name {
 		}
 	}
 	if issuer.CommonName == "" {
-		errorLog.Fatalf("Failed to parse common name from %s", dn)
+		errorLog.Fatalf("Failed to parse common name from %s", *dn)
 	}
-	return issuer
+	return &issuer
 }
 
-func parseSANs(sans string) *sanList {
-	debugLog.Printf("Parsing Subject Alternative Names: %s\n", sans)
-	result := &sanList{}
-	for _, h := range strings.Split(sans, ",") {
+func parseSANs(sans *string) *sanList {
+	debugLog.Printf("Parsing Subject Alternative Names: %s\n", *sans)
+	result := sanList{}
+	for _, h := range strings.Split(*sans, ",") {
 		if ip := net.ParseIP(h); ip != nil {
 			result.ip = append(result.ip, ip)
 		} else if email := parseEmailAddress(h); email != nil {
@@ -105,7 +105,7 @@ func parseSANs(sans string) *sanList {
 			result.dns = append(result.dns, h)
 		}
 	}
-	return result
+	return &result
 }
 
 func parseEmailAddress(address string) (email *mail.Address) {
@@ -152,10 +152,10 @@ func saveCert(dest pkiWriter, manifest *certManifest, path string) {
 	debugLog.Printf("Saving certificate: %s\n", path)
 	data := []byte{}
 	for manifest != nil && manifest.path != "." {
-		data = append(data, marshalCert(manifest.Certificate)...)
+		data = append(data, *marshalCert(manifest.Certificate)...)
 		manifest = manifest.ca
 	}
-	dest.writeData(data, path, os.FileMode(0644), overwrite)
+	dest.writeData(&data, path, os.FileMode(0644), overwrite)
 }
 
 func (manifest *csrManifest) save(dest pkiWriter) {
@@ -166,12 +166,12 @@ func (manifest *csrManifest) save(dest pkiWriter) {
 		baseName = filepath.Join(manifest.path, filepath.Base(manifest.path))
 	}
 	saveKey(dest, manifest.PrivateKey, baseName+"-key.pem")
-	saveCSR(dest, manifest.CertificateRequest.Raw, baseName+"-csr.pem")
+	saveCSR(dest, &(manifest.CertificateRequest.Raw), baseName+"-csr.pem")
 }
 
-func saveCSR(dest pkiWriter, der []byte, path string) {
+func saveCSR(dest pkiWriter, der *[]byte, path string) {
 	debugLog.Printf("Saving certificate signing request: %s\n", path)
-	dest.writeData(der, path, os.FileMode(0644), overwrite)
+	dest.writeData(marshalCSR(der), path, os.FileMode(0644), overwrite)
 }
 
 func readCert(path string) *x509.Certificate {
@@ -179,7 +179,7 @@ func readCert(path string) *x509.Certificate {
 	if err != nil {
 		errorLog.Fatalf("Failed to read certificate file %s: %s", filepath.Join(root, path), err)
 	}
-	return unMarshalCert(der)
+	return unMarshalCert(&der)
 }
 
 func readKey(path string) *ecdsa.PrivateKey {
@@ -187,15 +187,16 @@ func readKey(path string) *ecdsa.PrivateKey {
 	if err != nil {
 		errorLog.Fatalf("Failed to read private key file %s: %s", filepath.Join(root, path), err)
 	}
-	return unMarshalKey(der)
+	return unMarshalKey(&der)
 }
 
-func marshalCert(cert *x509.Certificate) []byte {
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+func marshalCert(cert *x509.Certificate) *[]byte {
+	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+	return &data
 }
 
-func unMarshalCert(der []byte) *x509.Certificate {
-	block, _ := pem.Decode(der)
+func unMarshalCert(der *[]byte) *x509.Certificate {
+	block, _ := pem.Decode(*der)
 	if block == nil || block.Type != "CERTIFICATE" {
 		errorLog.Fatal("Failed to decode certificate")
 	}
@@ -206,16 +207,30 @@ func unMarshalCert(der []byte) *x509.Certificate {
 	return crt
 }
 
-func marshalKey(key *ecdsa.PrivateKey) []byte {
+func marshalCSR(csr *[]byte) *[]byte {
+	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: *csr})
+	return &data
+}
+
+func unMarshalCSR(csr *[]byte) *[]byte {
+	block, _ := pem.Decode(*csr)
+	if block == nil || block.Type != "CERTIFICATE REQUEST" {
+		errorLog.Fatal("Failed to decode certificate request")
+	}
+	return &(block.Bytes)
+}
+
+func marshalKey(key *ecdsa.PrivateKey) *[]byte {
 	der, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
 		errorLog.Fatalf("Failed to marshal private key: %s", err)
 	}
-	return pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+	data := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+	return &data
 }
 
-func unMarshalKey(der []byte) *ecdsa.PrivateKey {
-	block, _ := pem.Decode(der)
+func unMarshalKey(der *[]byte) *ecdsa.PrivateKey {
+	block, _ := pem.Decode(*der)
 	if block == nil || block.Type != "EC PRIVATE KEY" {
 		errorLog.Fatal("Failed to decode private key")
 	}

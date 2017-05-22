@@ -126,7 +126,7 @@ func createCertificate(args []string, path, defaultDN, defaultSAN string, defaul
 	if err := os.MkdirAll(path, os.FileMode(0755)); err != nil {
 		errorLog.Fatalf("Failed to create directory %s: %s", path, err)
 	}
-	sans := parseSANs(*san)
+	sans := parseSANs(san)
 	manifest := certManifest{
 		path:       path,
 		PrivateKey: generateKey(),
@@ -149,7 +149,7 @@ func createCertificate(args []string, path, defaultDN, defaultSAN string, defaul
 		manifest.SubjectKeyId = hash[:]
 	}
 	manifest.loadCertChain(true)
-	manifest.Subject = parseDN(manifest.ca.Subject, *dn)
+	manifest.Subject = *parseDN(manifest.ca.Subject, dn)
 	manifest.AuthorityKeyId = manifest.ca.SubjectKeyId
 	manifest.sign()
 	return &manifest
@@ -205,13 +205,13 @@ func createCA(args []string, path string, defaultDN string, defaultValidity int)
 			Certificate: manifest.Certificate,
 			PrivateKey:  manifest.PrivateKey,
 		}
-		manifest.Subject = parseDN(pkix.Name{}, *dn)
+		manifest.Subject = *parseDN(pkix.Name{}, dn)
 	} else {
 		manifest.loadCertChain(true)
 		if manifest.ca.MaxPathLen < 1 || manifest.MaxPathLen > (manifest.ca.MaxPathLen-1) {
 			errorLog.Fatalf("Max Path Length of ca exceeded")
 		}
-		manifest.Subject = parseDN(manifest.ca.Subject, *dn)
+		manifest.Subject = *parseDN(manifest.ca.Subject, dn)
 	}
 	manifest.AuthorityKeyId = manifest.ca.SubjectKeyId
 	manifest.sign()
@@ -238,14 +238,14 @@ func createCSR(args []string) *csrManifest {
 	default:
 		errorLog.Fatalf("Invalid path %s", strings.Join(fs.Args(), ","))
 	}
-	sans := *parseSANs(*san)
+	sans := parseSANs(san)
 	key := generateKey()
 	manifest := csrManifest{
 		path:       path,
 		PrivateKey: key,
 		password:   *password,
 		CertificateRequest: &x509.CertificateRequest{
-			Subject:            parseDN(pkix.Name{}, *dn),
+			Subject:            *parseDN(pkix.Name{}, dn),
 			SignatureAlgorithm: x509.ECDSAWithSHA384,
 			PublicKeyAlgorithm: x509.ECDSA,
 			PublicKey:          key.Public(),
