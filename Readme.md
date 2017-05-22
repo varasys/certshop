@@ -1,4 +1,4 @@
-# kubesec
+# certshop
 
 # Still need to update documentation to reflect updated functionality in kubesec.
 

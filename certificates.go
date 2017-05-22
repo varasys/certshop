@@ -22,6 +22,21 @@ type certManifest struct {
 	ca *certManifest
 	*x509.Certificate
 	*ecdsa.PrivateKey
+	password string
+}
+
+type csrManifest struct {
+	path string
+
+	*x509.CertificateRequest
+	*ecdsa.PrivateKey
+	password string
+}
+
+type sanList struct {
+	ip    []net.IP
+	email []string
+	dns   []string
 }
 
 func generateSerial() *big.Int {
@@ -78,17 +93,19 @@ func parseDN(issuer pkix.Name, dn string) pkix.Name {
 	return issuer
 }
 
-func (manifest *certManifest) parseSAN(sans string) {
+func parseSANs(sans string) *sanList {
 	debugLog.Printf("Parsing Subject Alternative Names: %s\n", sans)
+	result := &sanList{}
 	for _, h := range strings.Split(sans, ",") {
 		if ip := net.ParseIP(h); ip != nil {
-			manifest.IPAddresses = append(manifest.IPAddresses, ip)
+			result.ip = append(result.ip, ip)
 		} else if email := parseEmailAddress(h); email != nil {
-			manifest.EmailAddresses = append(manifest.EmailAddresses, email.Address)
+			result.email = append(result.email, email.Address)
 		} else {
-			manifest.DNSNames = append(manifest.DNSNames, h)
+			result.dns = append(result.dns, h)
 		}
 	}
+	return result
 }
 
 func parseEmailAddress(address string) (email *mail.Address) {
@@ -120,36 +137,41 @@ func (manifest *certManifest) sign() {
 	manifest.Certificate = cert
 }
 
-func (manifest *certManifest) save() {
+func (manifest *certManifest) save(dest pkiWriter) {
 	baseName := filepath.Join(manifest.path, filepath.Base(manifest.path))
-	manifest.saveKey(baseName + "-key.pem")
-	manifest.saveCert(baseName + ".pem")
+	saveKey(dest, manifest.PrivateKey, baseName+"-key.pem")
+	saveCert(dest, manifest, baseName+".pem")
 }
 
-func (manifest *certManifest) saveCert(path string) {
-	debugLog.Printf("Saving certificate: %s\n", filepath.Join(root, path))
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, os.FileMode(0644))
-	if err != nil {
-		errorLog.Fatalf("Failed to open %s for writing: %s", filepath.Join(root, path), err)
-	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			errorLog.Fatalf("Failed to close %s: %s", filepath.Join(root, path), err)
-		}
-	}()
+func saveKey(dest pkiWriter, key *ecdsa.PrivateKey, path string) {
+	debugLog.Printf("Saving private key: %s\n", path)
+	dest.writeData(marshalKey(key), path, os.FileMode(0600), overwrite)
+}
+
+func saveCert(dest pkiWriter, manifest *certManifest, path string) {
+	debugLog.Printf("Saving certificate: %s\n", path)
+	data := []byte{}
 	for manifest != nil && manifest.path != "." {
-		if _, err := file.Write(marshalCert(manifest.Certificate)); err != nil {
-			errorLog.Fatalf("Failed to concat certificate %s: %s", filepath.Join(root, manifest.path), err)
-		}
+		data = append(data, marshalCert(manifest.Certificate)...)
 		manifest = manifest.ca
 	}
+	dest.writeData(data, path, os.FileMode(0644), overwrite)
 }
 
-func (manifest *certManifest) saveKey(path string) {
-	debugLog.Printf("Saving private key: %s\n", filepath.Join(root, path))
-	if err := ioutil.WriteFile(path, marshalKey(manifest.PrivateKey), os.FileMode(0600)); err != nil {
-		errorLog.Fatalf("Failed to save private key %s: %s", path, err)
+func (manifest *csrManifest) save(dest pkiWriter) {
+	var baseName string
+	if manifest.path == "" {
+		baseName = "csr"
+	} else {
+		baseName = filepath.Join(manifest.path, filepath.Base(manifest.path))
 	}
+	saveKey(dest, manifest.PrivateKey, baseName+"-key.pem")
+	saveCSR(dest, manifest.CertificateRequest.Raw, baseName+"-csr.pem")
+}
+
+func saveCSR(dest pkiWriter, der []byte, path string) {
+	debugLog.Printf("Saving certificate signing request: %s\n", path)
+	dest.writeData(der, path, os.FileMode(0644), overwrite)
 }
 
 func readCert(path string) *x509.Certificate {
