@@ -35,7 +35,7 @@ func main() {
 		errorLog.SetFlags(log.Lshortfile)
 	}
 	if absRoot, err := filepath.Abs(root); err != nil {
-		errorLog.Fatalf("Failed to parse root directory %s: %s", root, err)
+		errorLog.Fatalf("Failed to parse root path %s: %s", root, err)
 	} else {
 		root = absRoot
 	}
@@ -96,74 +96,24 @@ func main() {
 		}
 		infoLog.Printf("Finished creating certificate signing request")
 	case "key":
-		key := generateKey()
-		saveKey(newTgzWriter(os.Stdout), key, "key.pem")
+		// not implemented yet
 	case "export":
 		exportCertificate(flag.Args()[1:])
 	case "kubernetes":
 		createKubernetes(flag.Args()[1:])
 	default:
 		debugLog.Println("Usage: certshop ca | ica | server | client | signature | export")
+		flag.PrintDefaults()
 	}
 }
 
-func createCertificate(args []string, path, defaultDN, defaultSAN string, defaultValidity int, usage x509.KeyUsage, extUsage []x509.ExtKeyUsage) *certManifest {
-	fs := flag.NewFlagSet("command", flag.PanicOnError)
-	dn := fs.String("dn", defaultDN, "certificate subject")
-	san := fs.String("san", defaultSAN, "subject alternative names")
-	validity := fs.Int("validity", defaultValidity, "certificate duration in days")
-
-	if err := fs.Parse(args); err != nil {
-		errorLog.Fatalf("Failed to parse command line arguments: %s", err)
-	}
-	if len(fs.Args()) > 1 {
-		errorLog.Fatalf("Invalid path %s", strings.Join(fs.Args(), ","))
-	} else if len(fs.Args()) == 1 {
-		path = filepath.Clean(fs.Arg(0))
-	}
-	debugLog.Printf("Creating Certificate %s with Subject: %s\n", path, *dn)
-	if !overwrite {
-		if _, err := os.Stat(path); err == nil {
-			errorLog.Fatalf("Directory %s exists, use -overwrite flag to overwrite.", filepath.Join(root, path))
-		}
-	}
-	if err := os.MkdirAll(path, os.FileMode(0755)); err != nil {
-		errorLog.Fatalf("Failed to create directory %s: %s", path, err)
-	}
-	sans := parseSANs(san)
-	manifest := certManifest{
-		path:       path,
-		PrivateKey: generateKey(),
-		Certificate: &x509.Certificate{
-			IsCA:           false,
-			KeyUsage:       usage,
-			ExtKeyUsage:    extUsage,
-			NotBefore:      runTime,
-			NotAfter:       runTime.Add(time.Duration(*validity*24) * time.Hour),
-			SerialNumber:   generateSerial(),
-			IPAddresses:    sans.ip,
-			EmailAddresses: sans.email,
-			DNSNames:       sans.dns,
-		},
-	}
-	if id, err := x509.MarshalPKIXPublicKey(manifest.Public()); err != nil {
-		errorLog.Fatalf("Failed to marshal public key")
-	} else {
-		hash := sha1.Sum(id)
-		manifest.SubjectKeyId = hash[:]
-	}
-	manifest.loadCertChain(true)
-	manifest.Subject = *parseDN(manifest.ca.Subject, dn)
-	manifest.AuthorityKeyId = manifest.ca.SubjectKeyId
-	manifest.sign()
-	return &manifest
-}
-
-func createCA(args []string, path string, defaultDN string, defaultValidity int) *certManifest {
+func createCA(args []string, path, defaultDN string, defaultValidity int) *certManifest {
 	fs := flag.NewFlagSet("command", flag.PanicOnError)
 	dn := fs.String("dn", defaultDN, "certificate subject")
 	maxPathLength := fs.Int("maxPathLength", 0, "max path length")
 	validity := fs.Int("validity", defaultValidity, "certificate duration in days")
+	subjectPass := fs.String("subjectPass", "", "subject certificate private key password")
+	issuerPass := fs.String("issuerPass", "", "issuer certificate private key password")
 
 	if err := fs.Parse(args); err != nil {
 		errorLog.Fatalf("Failed to parse command line arguments: %s", err)
@@ -184,7 +134,7 @@ func createCA(args []string, path string, defaultDN string, defaultValidity int)
 	}
 	manifest := certManifest{
 		path:       path,
-		PrivateKey: generateKey(),
+		privateKey: &privateKey{generateKey(), *subjectPass},
 		Certificate: &x509.Certificate{
 			IsCA: true,
 			BasicConstraintsValid: true,
@@ -207,11 +157,14 @@ func createCA(args []string, path string, defaultDN string, defaultValidity int)
 		manifest.ca = &certManifest{
 			path:        ".",
 			Certificate: manifest.Certificate,
-			PrivateKey:  manifest.PrivateKey,
+			privateKey:  manifest.privateKey,
 		}
 		manifest.Subject = *parseDN(pkix.Name{}, dn)
 	} else {
-		manifest.loadCertChain(true)
+		manifest.loadCertChain()
+		keyFile := filepath.Dir(path)
+		keyFile = filepath.Join(keyFile, filepath.Base(keyFile)+"-key.pem")
+		manifest.ca.privateKey = readKey(keyFile, *issuerPass)
 		if manifest.ca.MaxPathLen < 1 || manifest.MaxPathLen > (manifest.ca.MaxPathLen-1) {
 			errorLog.Fatalf("Maximum Path Length of certificate authority exceeded")
 		}
@@ -222,11 +175,69 @@ func createCA(args []string, path string, defaultDN string, defaultValidity int)
 	return &manifest
 }
 
+func createCertificate(args []string, path, defaultDN, defaultSAN string, defaultValidity int, usage x509.KeyUsage, extUsage []x509.ExtKeyUsage) *certManifest {
+	fs := flag.NewFlagSet("command", flag.PanicOnError)
+	dn := fs.String("dn", defaultDN, "certificate subject")
+	san := fs.String("san", defaultSAN, "subject alternative names")
+	validity := fs.Int("validity", defaultValidity, "certificate duration in days")
+	subjectPass := fs.String("subjectPass", "", "subject certificate private key password")
+	issuerPass := fs.String("issuerPass", "", "issuer certificate private key password")
+
+	if err := fs.Parse(args); err != nil {
+		errorLog.Fatalf("Failed to parse command line arguments: %s", err)
+	}
+	if len(fs.Args()) > 1 {
+		errorLog.Fatalf("Invalid path %s", strings.Join(fs.Args(), ","))
+	} else if len(fs.Args()) == 1 {
+		path = filepath.Clean(fs.Arg(0))
+	}
+	debugLog.Printf("Creating Certificate %s with Subject: %s\n", path, *dn)
+	if !overwrite {
+		if _, err := os.Stat(path); err == nil {
+			errorLog.Fatalf("Directory %s exists, use -overwrite flag to overwrite.", filepath.Join(root, path))
+		}
+	}
+	if err := os.MkdirAll(path, os.FileMode(0755)); err != nil {
+		errorLog.Fatalf("Failed to create directory %s: %s", path, err)
+	}
+	sans := parseSANs(san)
+	manifest := certManifest{
+		path:       path,
+		privateKey: &privateKey{generateKey(), *subjectPass},
+		Certificate: &x509.Certificate{
+			IsCA:           false,
+			KeyUsage:       usage,
+			ExtKeyUsage:    extUsage,
+			NotBefore:      runTime,
+			NotAfter:       runTime.Add(time.Duration(*validity*24) * time.Hour),
+			SerialNumber:   generateSerial(),
+			IPAddresses:    sans.ip,
+			EmailAddresses: sans.email,
+			DNSNames:       sans.dns,
+		},
+	}
+	if id, err := x509.MarshalPKIXPublicKey(manifest.Public()); err != nil {
+		errorLog.Fatalf("Failed to marshal public key")
+	} else {
+		hash := sha1.Sum(id)
+		manifest.SubjectKeyId = hash[:]
+	}
+	manifest.loadCertChain()
+	keyFile := filepath.Dir(path)
+	keyFile = filepath.Join(keyFile, filepath.Base(keyFile)+"-key.pem")
+	manifest.ca.privateKey = readKey(keyFile, *issuerPass)
+	manifest.Subject = *parseDN(manifest.ca.Subject, dn)
+	manifest.AuthorityKeyId = manifest.ca.SubjectKeyId
+	manifest.sign()
+	return &manifest
+}
+
 func createCSR(args []string) *csrManifest {
 	fs := flag.NewFlagSet("command", flag.PanicOnError)
 	dn := fs.String("dn", "", "certificate subject (required)")
 	san := fs.String("san", "", "subject alternative names")
-	password := fs.String("password", "", "private key password (default=\"\")")
+	keyFile := fs.String("keyFile", "", "private key file (optional)")
+	keyPass := fs.String("keyPass", "", "private key password")
 	if err := fs.Parse(args); err != nil {
 		errorLog.Fatalf("Failed to parse command line arguments: %s", err)
 	}
@@ -243,16 +254,21 @@ func createCSR(args []string) *csrManifest {
 		errorLog.Fatalf("Invalid path %s", strings.Join(fs.Args(), ","))
 	}
 	sans := parseSANs(san)
-	key := generateKey()
+	var key *privateKey
+	if *keyFile == "" {
+		key = &privateKey{generateKey(), *keyPass}
+	} else {
+		key = readKey(*keyFile, *keyPass)
+	}
+
 	manifest := csrManifest{
 		path:       path,
-		PrivateKey: key,
-		password:   *password,
+		privateKey: key,
 		CertificateRequest: &x509.CertificateRequest{
 			Subject:            *parseDN(pkix.Name{}, dn),
 			SignatureAlgorithm: x509.ECDSAWithSHA384,
 			PublicKeyAlgorithm: x509.ECDSA,
-			PublicKey:          key.Public(),
+			PublicKey:          key.PrivateKey.Public(),
 			DNSNames:           sans.dns,
 			EmailAddresses:     sans.email,
 			IPAddresses:        sans.ip,

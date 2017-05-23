@@ -21,22 +21,25 @@ type certManifest struct {
 
 	ca *certManifest
 	*x509.Certificate
-	*ecdsa.PrivateKey
-	password string
+	*privateKey
 }
 
 type csrManifest struct {
 	path string
 
 	*x509.CertificateRequest
-	*ecdsa.PrivateKey
-	password string
+	*privateKey
 }
 
 type sanList struct {
 	ip    []net.IP
 	email []string
 	dns   []string
+}
+
+type privateKey struct {
+	*ecdsa.PrivateKey
+	password string
 }
 
 func generateSerial() *big.Int {
@@ -139,13 +142,13 @@ func (manifest *certManifest) sign() {
 
 func (manifest *certManifest) save(dest pkiWriter) {
 	baseName := filepath.Join(manifest.path, filepath.Base(manifest.path))
-	saveKey(dest, manifest.PrivateKey, baseName+"-key.pem")
+	saveKey(dest, manifest.privateKey, baseName+"-key.pem")
 	saveCert(dest, manifest, baseName+".pem")
 }
 
-func saveKey(dest pkiWriter, key *ecdsa.PrivateKey, path string) {
+func saveKey(dest pkiWriter, key *privateKey, path string) {
 	debugLog.Printf("Saving private key: %s\n", path)
-	dest.writeData(marshalKey(key), path, os.FileMode(0600), overwrite)
+	dest.writeData(key.marshalKey(), path, os.FileMode(0600), overwrite)
 }
 
 func saveCert(dest pkiWriter, manifest *certManifest, path string) {
@@ -165,7 +168,7 @@ func (manifest *csrManifest) save(dest pkiWriter) {
 	} else {
 		baseName = filepath.Join(manifest.path, filepath.Base(manifest.path))
 	}
-	saveKey(dest, manifest.PrivateKey, baseName+"-key.pem")
+	saveKey(dest, manifest.privateKey, baseName+"-key.pem")
 	saveCSR(dest, &(manifest.CertificateRequest.Raw), baseName+"-csr.pem")
 }
 
@@ -182,12 +185,12 @@ func readCert(path string) *x509.Certificate {
 	return unMarshalCert(&der)
 }
 
-func readKey(path string) *ecdsa.PrivateKey {
+func readKey(path string, password string) *privateKey {
 	der, err := ioutil.ReadFile(path)
 	if err != nil {
 		errorLog.Fatalf("Failed to read private key file %s: %s", filepath.Join(root, path), err)
 	}
-	return unMarshalKey(&der)
+	return unMarshalKey(&der, password)
 }
 
 func marshalCert(cert *x509.Certificate) *[]byte {
@@ -220,28 +223,54 @@ func unMarshalCSR(csr *[]byte) *[]byte {
 	return &(block.Bytes)
 }
 
-func marshalKey(key *ecdsa.PrivateKey) *[]byte {
-	der, err := x509.MarshalECPrivateKey(key)
+func (key *privateKey) marshalKey() *[]byte {
+	der, err := x509.MarshalECPrivateKey(key.PrivateKey)
 	if err != nil {
 		errorLog.Fatalf("Failed to marshal private key: %s", err)
 	}
-	data := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+	if key.password == "" {
+		data := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+		return &data
+	}
+	block, err := x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", der, []byte(key.password), x509.PEMCipherAES256)
+	if err != nil {
+		errorLog.Fatalf("Failed to encrypt private key: %s", err)
+	}
+	data := pem.EncodeToMemory(block)
 	return &data
 }
 
-func unMarshalKey(der *[]byte) *ecdsa.PrivateKey {
+func unMarshalKey(der *[]byte, password string) *privateKey {
+	if password == "" {
+		block, _ := pem.Decode(*der)
+		if block == nil || block.Type != "EC PRIVATE KEY" {
+			errorLog.Fatal("Failed to decode private key")
+		}
+		key, err := x509.ParseECPrivateKey(block.Bytes)
+		if err != nil {
+			if x509.IsEncryptedPEMBlock(block) {
+				errorLog.Fatal("Failed to parse private key: key is encrypted but no password provided")
+			}
+			errorLog.Fatalf("Failed to parse private key: %s", err)
+		}
+		return &privateKey{PrivateKey: key}
+	}
 	block, _ := pem.Decode(*der)
 	if block == nil || block.Type != "EC PRIVATE KEY" {
 		errorLog.Fatal("Failed to decode private key")
 	}
-	key, err := x509.ParseECPrivateKey(block.Bytes)
+	dec, err := x509.DecryptPEMBlock(block, []byte(password))
 	if err != nil {
-		errorLog.Fatalf("Failed to parse private key: %s", err)
+		errorLog.Fatalf("Failed to decrypt private key: %s", err)
 	}
-	return key
+	key, err := x509.ParseECPrivateKey(dec)
+	if err != nil {
+		errorLog.Fatalf("Failed to parse decrypted private key: %s", err)
+	}
+	return &privateKey{PrivateKey: key}
 }
 
-func (manifest *certManifest) loadCertChain(includeKey bool) {
+func (manifest *certManifest) loadCertChain() {
 	if filepath.Dir(manifest.path) != "." {
 		file := filepath.Dir(manifest.path)
 		file = filepath.Join(file, filepath.Base(file))
@@ -249,9 +278,6 @@ func (manifest *certManifest) loadCertChain(includeKey bool) {
 			path:        filepath.Dir(manifest.path),
 			Certificate: readCert(file + ".pem"),
 		}
-		if includeKey {
-			manifest.ca.PrivateKey = readKey(file + "-key.pem")
-		}
-		manifest.ca.loadCertChain(false)
+		manifest.ca.loadCertChain()
 	}
 }
