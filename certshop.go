@@ -305,31 +305,9 @@ func hashPublicKey(key *ecdsa.PublicKey) *[]byte {
 	}
 	_, err = asn1.Unmarshal(der, &publicKeyInfo)
 	if err != nil {
-		errorLog.Fatalf("Failed to marshal public key asn.1 bitstring")
+		errorLog.Fatalf("Failed to unmarshal public key asn.1 bitstring")
 	}
 	hash := sha1.Sum(publicKeyInfo.PublicKey.RightAlign())
 	slice := hash[:]
 	return &slice
 }
-
-// func hashPublicKey(key *ecdsa.PublicKey) *[]byte {
-// 	der, err := x509.MarshalPKIXPublicKey(key)
-// 	if err != nil {
-// 		errorLog.Fatalf("Failed to marshal public key")
-// 	}
-// 	hash := sha1.Sum(der)
-// 	slice := hash[:]
-// 	return &slice
-// }
-
-// func getIssuerKeyHash(cert *x509.Certificate) []byte {
-// 	var publicKeyInfo struct {
-// 		Algorithm pkix.AlgorithmIdentifier
-// 		PublicKey asn1.BitString
-// 	}
-// 	asn1.Unmarshal(cert.RawSubjectPublicKeyInfo, &publicKeyInfo)
-// 	return sha1.Sum(publicKeyInfo.PublicKey.RightAlign())
-// 	h := sha1.New()
-// 	h.Write()
-// 	return h.Sum(nil)
-// }
