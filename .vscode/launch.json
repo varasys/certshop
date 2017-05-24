@@ -19,7 +19,7 @@
             "host": "127.0.0.1",
             "program": "${fileDirname}",
             "env": {},
-            "args": ["-overwrite", "ca", "-dn=/CN=test ca/O=ACME/OU=skunk", "-maxPathLength=2", "ca"],
+            "args": ["-debug", "-overwrite", "ca", "-csrFile=tossme/tossme-csr.pem", "ca"],
             "showLog": true
         },
         {
@@ -46,6 +46,19 @@
             "program": "${fileDirname}",
             "env": {},
             "args": ["csr", "-dn=/CN=ACME"],
+            "showLog": true
+        },
+        {
+            "name": "Create Signature",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "remotePath": "",
+            "port": 2345,
+            "host": "127.0.0.1",
+            "program": "${fileDirname}",
+            "env": {},
+            "args": ["-overwrite", "-debug", "signature", "ca/ica/signature"],
             "showLog": true
         }
     ]

@@ -22,6 +22,7 @@ type certManifest struct {
 	ca *certManifest
 	*x509.Certificate
 	*privateKey
+	publicKey *ecdsa.PublicKey
 }
 
 type csrManifest struct {
@@ -129,7 +130,7 @@ func parseEmailAddress(address string) (email *mail.Address) {
 func (manifest *certManifest) sign() {
 	manifest.PublicKeyAlgorithm = x509.ECDSA
 	manifest.SignatureAlgorithm = x509.ECDSAWithSHA384
-	der, err := x509.CreateCertificate(rand.Reader, manifest.Certificate, manifest.ca.Certificate, manifest.Public(), manifest.ca.PrivateKey)
+	der, err := x509.CreateCertificate(rand.Reader, manifest.Certificate, manifest.ca.Certificate, manifest.publicKey, manifest.ca.PrivateKey)
 	if err != nil {
 		errorLog.Fatalf("Failed to sign certificate: %s", err)
 	}
@@ -142,7 +143,9 @@ func (manifest *certManifest) sign() {
 
 func (manifest *certManifest) save(dest pkiWriter) {
 	baseName := filepath.Join(manifest.path, filepath.Base(manifest.path))
-	saveKey(dest, manifest.privateKey, baseName+"-key.pem")
+	if manifest.privateKey != nil {
+		saveKey(dest, manifest.privateKey, baseName+"-key.pem")
+	}
 	saveCert(dest, manifest, baseName+".pem")
 }
 
@@ -193,6 +196,14 @@ func readKey(path string, password string) *privateKey {
 	return unMarshalKey(&der, password)
 }
 
+func readCSR(path string) *x509.CertificateRequest {
+	der, err := ioutil.ReadFile(path)
+	if err != nil {
+		errorLog.Fatalf("Failed to read certificate signing request file %s: %s", filepath.Join(root, path), err)
+	}
+	return unMarshalCSR(&der)
+}
+
 func marshalCert(cert *x509.Certificate) *[]byte {
 	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
 	return &data
@@ -215,12 +226,16 @@ func marshalCSR(csr *[]byte) *[]byte {
 	return &data
 }
 
-func unMarshalCSR(csr *[]byte) *[]byte {
-	block, _ := pem.Decode(*csr)
+func unMarshalCSR(der *[]byte) *x509.CertificateRequest {
+	block, _ := pem.Decode(*der)
 	if block == nil || block.Type != "CERTIFICATE REQUEST" {
 		errorLog.Fatal("Failed to decode certificate request")
 	}
-	return &(block.Bytes)
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		errorLog.Fatal("Failed to parse certificate request")
+	}
+	return csr
 }
 
 func (key *privateKey) marshalKey() *[]byte {
@@ -241,21 +256,24 @@ func (key *privateKey) marshalKey() *[]byte {
 }
 
 func unMarshalKey(der *[]byte, password string) *privateKey {
+	block, _ := pem.Decode(*der)
+	if block == nil || block.Type != "EC PRIVATE KEY" {
+		errorLog.Fatal("Failed to decode private key")
+	}
+	isEncrypted := x509.IsEncryptedPEMBlock(block)
+	if isEncrypted && password == "" {
+		errorLog.Fatalln("Failed to decrypt private key: key is encrypted but no password was provided")
+	} else if !isEncrypted && password != "" {
+		errorLog.Fatalln("Failed to decode private key: key is not encrypted but a password was provided")
+	}
 	if password == "" {
-		block, _ := pem.Decode(*der)
-		if block == nil || block.Type != "EC PRIVATE KEY" {
-			errorLog.Fatal("Failed to decode private key")
-		}
 		key, err := x509.ParseECPrivateKey(block.Bytes)
 		if err != nil {
-			if x509.IsEncryptedPEMBlock(block) {
-				errorLog.Fatal("Failed to parse private key: key is encrypted but no password provided")
-			}
 			errorLog.Fatalf("Failed to parse private key: %s", err)
 		}
 		return &privateKey{PrivateKey: key}
 	}
-	block, _ := pem.Decode(*der)
+	block, _ = pem.Decode(*der)
 	if block == nil || block.Type != "EC PRIVATE KEY" {
 		errorLog.Fatal("Failed to decode private key")
 	}

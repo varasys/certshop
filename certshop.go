@@ -1,10 +1,12 @@
 package main
 
 import (
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha1"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"flag"
 	"io/ioutil"
 	"log"
@@ -95,10 +97,8 @@ func main() {
 			manifest.save(writer)
 		}
 		infoLog.Printf("Finished creating certificate signing request")
-	case "key":
-		// not implemented yet
 	case "export":
-		exportCertificate(flag.Args()[1:])
+		// exportCertificate(flag.Args()[1:])
 	case "kubernetes":
 		createKubernetes(flag.Args()[1:])
 	default:
@@ -108,12 +108,14 @@ func main() {
 }
 
 func createCA(args []string, path, defaultDN string, defaultValidity int) *certManifest {
+	debugLog.Printf("Creating Certificate Authority %s\n", path)
 	fs := flag.NewFlagSet("command", flag.PanicOnError)
 	dn := fs.String("dn", defaultDN, "certificate subject")
 	maxPathLength := fs.Int("maxPathLength", 0, "max path length")
 	validity := fs.Int("validity", defaultValidity, "certificate duration in days")
 	subjectPass := fs.String("subjectPass", "", "subject certificate private key password")
 	issuerPass := fs.String("issuerPass", "", "issuer certificate private key password")
+	csrFile := fs.String("csrFile", "", "certificate signing request file")
 
 	if err := fs.Parse(args); err != nil {
 		errorLog.Fatalf("Failed to parse command line arguments: %s", err)
@@ -123,7 +125,9 @@ func createCA(args []string, path, defaultDN string, defaultValidity int) *certM
 	} else if len(fs.Args()) == 1 {
 		path = filepath.Clean(fs.Arg(0))
 	}
-	debugLog.Printf("Creating Certificate Authority %s with Subject: %s\n", path, *dn)
+	if filepath.Dir(path) == "." && *csrFile != "" {
+		errorLog.Fatalf("Failed to create certificate authority: certificate signing requests can't be used for root certificate authorities")
+	}
 	if !overwrite {
 		if _, err := os.Stat(path); err == nil {
 			errorLog.Fatalf("Directory %s exists, use -overwrite flag to overwrite.", filepath.Join(root, path))
@@ -133,8 +137,7 @@ func createCA(args []string, path, defaultDN string, defaultValidity int) *certM
 		errorLog.Fatalf("Failed to create directory %s: %s", path, err)
 	}
 	manifest := certManifest{
-		path:       path,
-		privateKey: &privateKey{generateKey(), *subjectPass},
+		path: path,
 		Certificate: &x509.Certificate{
 			IsCA: true,
 			BasicConstraintsValid: true,
@@ -147,12 +150,15 @@ func createCA(args []string, path, defaultDN string, defaultValidity int) *certM
 			SerialNumber:          generateSerial(),
 		},
 	}
-	if id, err := x509.MarshalPKIXPublicKey(manifest.Public()); err != nil {
-		errorLog.Fatalf("Failed to marshal public key")
+	if *csrFile != "" {
+		csr := readCSR(*csrFile)
+		manifest.publicKey = csr.PublicKey.(*ecdsa.PublicKey)
+		manifest.Subject = csr.Subject
 	} else {
-		hash := sha1.Sum(id)
-		manifest.SubjectKeyId = hash[:]
+		manifest.privateKey = &privateKey{generateKey(), *subjectPass}
+		manifest.publicKey = manifest.privateKey.Public().(*ecdsa.PublicKey)
 	}
+	manifest.SubjectKeyId = *hashPublicKey(manifest.publicKey)
 	if filepath.Dir(path) == "." { // self signed cert
 		manifest.ca = &certManifest{
 			path:        ".",
@@ -176,12 +182,14 @@ func createCA(args []string, path, defaultDN string, defaultValidity int) *certM
 }
 
 func createCertificate(args []string, path, defaultDN, defaultSAN string, defaultValidity int, usage x509.KeyUsage, extUsage []x509.ExtKeyUsage) *certManifest {
+	debugLog.Printf("Creating Certificate %s\n", path)
 	fs := flag.NewFlagSet("command", flag.PanicOnError)
 	dn := fs.String("dn", defaultDN, "certificate subject")
 	san := fs.String("san", defaultSAN, "subject alternative names")
 	validity := fs.Int("validity", defaultValidity, "certificate duration in days")
 	subjectPass := fs.String("subjectPass", "", "subject certificate private key password")
 	issuerPass := fs.String("issuerPass", "", "issuer certificate private key password")
+	csrFile := fs.String("csrFile", "", "certificate signing request file")
 
 	if err := fs.Parse(args); err != nil {
 		errorLog.Fatalf("Failed to parse command line arguments: %s", err)
@@ -191,7 +199,6 @@ func createCertificate(args []string, path, defaultDN, defaultSAN string, defaul
 	} else if len(fs.Args()) == 1 {
 		path = filepath.Clean(fs.Arg(0))
 	}
-	debugLog.Printf("Creating Certificate %s with Subject: %s\n", path, *dn)
 	if !overwrite {
 		if _, err := os.Stat(path); err == nil {
 			errorLog.Fatalf("Directory %s exists, use -overwrite flag to overwrite.", filepath.Join(root, path))
@@ -200,33 +207,38 @@ func createCertificate(args []string, path, defaultDN, defaultSAN string, defaul
 	if err := os.MkdirAll(path, os.FileMode(0755)); err != nil {
 		errorLog.Fatalf("Failed to create directory %s: %s", path, err)
 	}
-	sans := parseSANs(san)
 	manifest := certManifest{
-		path:       path,
-		privateKey: &privateKey{generateKey(), *subjectPass},
+		path: path,
 		Certificate: &x509.Certificate{
-			IsCA:           false,
-			KeyUsage:       usage,
-			ExtKeyUsage:    extUsage,
-			NotBefore:      runTime,
-			NotAfter:       runTime.Add(time.Duration(*validity*24) * time.Hour),
-			SerialNumber:   generateSerial(),
-			IPAddresses:    sans.ip,
-			EmailAddresses: sans.email,
-			DNSNames:       sans.dns,
+			IsCA:         false,
+			KeyUsage:     usage,
+			ExtKeyUsage:  extUsage,
+			NotBefore:    runTime,
+			NotAfter:     runTime.Add(time.Duration(*validity*24) * time.Hour),
+			SerialNumber: generateSerial(),
 		},
 	}
-	if id, err := x509.MarshalPKIXPublicKey(manifest.Public()); err != nil {
-		errorLog.Fatalf("Failed to marshal public key")
-	} else {
-		hash := sha1.Sum(id)
-		manifest.SubjectKeyId = hash[:]
-	}
 	manifest.loadCertChain()
+	if *csrFile != "" {
+		csr := readCSR(*csrFile)
+		manifest.publicKey = csr.PublicKey.(*ecdsa.PublicKey)
+		manifest.Subject = csr.Subject
+		manifest.IPAddresses = csr.IPAddresses
+		manifest.EmailAddresses = csr.EmailAddresses
+		manifest.DNSNames = csr.DNSNames
+	} else {
+		manifest.privateKey = &privateKey{generateKey(), *subjectPass}
+		manifest.publicKey = manifest.privateKey.Public().(*ecdsa.PublicKey)
+		manifest.Subject = *parseDN(manifest.ca.Subject, dn)
+		sans := parseSANs(san)
+		manifest.IPAddresses = sans.ip
+		manifest.EmailAddresses = sans.email
+		manifest.DNSNames = sans.dns
+	}
+	manifest.SubjectKeyId = *hashPublicKey(manifest.publicKey)
 	keyFile := filepath.Dir(path)
 	keyFile = filepath.Join(keyFile, filepath.Base(keyFile)+"-key.pem")
 	manifest.ca.privateKey = readKey(keyFile, *issuerPass)
-	manifest.Subject = *parseDN(manifest.ca.Subject, dn)
 	manifest.AuthorityKeyId = manifest.ca.SubjectKeyId
 	manifest.sign()
 	return &manifest
@@ -281,3 +293,43 @@ func createCSR(args []string) *csrManifest {
 	}
 	return &manifest
 }
+
+func hashPublicKey(key *ecdsa.PublicKey) *[]byte {
+	der, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil {
+		errorLog.Fatalf("Failed to marshal public key")
+	}
+	var publicKeyInfo struct {
+		Algorithm pkix.AlgorithmIdentifier
+		PublicKey asn1.BitString
+	}
+	_, err = asn1.Unmarshal(der, &publicKeyInfo)
+	if err != nil {
+		errorLog.Fatalf("Failed to marshal public key asn.1 bitstring")
+	}
+	hash := sha1.Sum(publicKeyInfo.PublicKey.RightAlign())
+	slice := hash[:]
+	return &slice
+}
+
+// func hashPublicKey(key *ecdsa.PublicKey) *[]byte {
+// 	der, err := x509.MarshalPKIXPublicKey(key)
+// 	if err != nil {
+// 		errorLog.Fatalf("Failed to marshal public key")
+// 	}
+// 	hash := sha1.Sum(der)
+// 	slice := hash[:]
+// 	return &slice
+// }
+
+// func getIssuerKeyHash(cert *x509.Certificate) []byte {
+// 	var publicKeyInfo struct {
+// 		Algorithm pkix.AlgorithmIdentifier
+// 		PublicKey asn1.BitString
+// 	}
+// 	asn1.Unmarshal(cert.RawSubjectPublicKeyInfo, &publicKeyInfo)
+// 	return sha1.Sum(publicKeyInfo.PublicKey.RightAlign())
+// 	h := sha1.New()
+// 	h.Write()
+// 	return h.Sum(nil)
+// }
