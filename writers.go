@@ -31,7 +31,7 @@ func (writer *tgzWriter) close() {
 }
 
 func (writer *fileWriter) close() {
-	// just to satisfy pkiWriter interface
+	// needed to satisfy pkiWriter interface, but not used since files are closed as soon as data is written
 }
 
 func newTgzWriter(dest io.Writer) *tgzWriter {

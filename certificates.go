@@ -17,7 +17,7 @@ import (
 )
 
 type certManifest struct {
-	path string // path of new certificate directory relative to root
+	path string
 
 	ca *certManifest
 	*x509.Certificate
@@ -33,6 +33,7 @@ type csrManifest struct {
 }
 
 type sanList struct {
+	sans  *string
 	ip    []net.IP
 	email []string
 	dns   []string
@@ -40,7 +41,54 @@ type sanList struct {
 
 type privateKey struct {
 	*ecdsa.PrivateKey
-	password string
+	pwd *password
+}
+
+type password struct {
+	*string
+}
+
+func (pwd *password) Get() interface{} {
+	return pwd.String
+}
+
+func (pwd *password) String() string {
+	if pwd.string != nil {
+		return *pwd.string
+	}
+	return ""
+}
+
+func (pwd *password) Set(val string) error {
+	pwd.string = &val
+	return nil
+}
+
+func (sans *sanList) Get() interface{} {
+	return sans
+}
+
+func (sans *sanList) String() string {
+	if sans.sans != nil {
+		return *sans.sans
+	}
+	return ""
+}
+
+func (sans *sanList) Set(val string) error {
+	debugLog.Printf("Parsing Subject Alternative Names: %s\n", val)
+	sans.sans = &val
+	for _, h := range strings.Split(val, ",") {
+		h = strings.TrimSpace(h)
+		if ip := net.ParseIP(h); ip != nil {
+			sans.ip = append(sans.ip, ip)
+		} else if email := parseEmailAddress(h); email != nil {
+			sans.email = append(sans.email, email.Address)
+		} else {
+			sans.dns = append(sans.dns, h)
+		}
+	}
+	return nil
 }
 
 func generateSerial() *big.Int {
@@ -97,21 +145,6 @@ func parseDN(issuer pkix.Name, dn *string) *pkix.Name {
 	return &issuer
 }
 
-func parseSANs(sans *string) *sanList {
-	debugLog.Printf("Parsing Subject Alternative Names: %s\n", *sans)
-	result := sanList{}
-	for _, h := range strings.Split(*sans, ",") {
-		if ip := net.ParseIP(h); ip != nil {
-			result.ip = append(result.ip, ip)
-		} else if email := parseEmailAddress(h); email != nil {
-			result.email = append(result.email, email.Address)
-		} else {
-			result.dns = append(result.dns, h)
-		}
-	}
-	return &result
-}
-
 func parseEmailAddress(address string) (email *mail.Address) {
 	// implemented as a seperate function because net.mail.ParseAddress
 	// panics on malformed addresses (appears to be a bug)
@@ -156,12 +189,7 @@ func saveKey(dest pkiWriter, key *privateKey, path string) {
 
 func saveCert(dest pkiWriter, manifest *certManifest, path string) {
 	debugLog.Printf("Saving certificate: %s\n", path)
-	data := []byte{}
-	for manifest != nil && manifest.path != "." {
-		data = append(data, *marshalCert(manifest.Certificate)...)
-		manifest = manifest.ca
-	}
-	dest.writeData(&data, path, os.FileMode(0644), overwrite)
+	dest.writeData(marshalCert(manifest.Certificate), path, os.FileMode(0644), overwrite)
 }
 
 func (manifest *csrManifest) save(dest pkiWriter) {
@@ -188,12 +216,12 @@ func readCert(path string) *x509.Certificate {
 	return unMarshalCert(&der)
 }
 
-func readKey(path string, password string) *privateKey {
+func readKey(path string, pwd *password) *privateKey {
 	der, err := ioutil.ReadFile(path)
 	if err != nil {
 		errorLog.Fatalf("Failed to read private key file %s: %s", filepath.Join(root, path), err)
 	}
-	return unMarshalKey(&der, password)
+	return unMarshalKey(&der, pwd)
 }
 
 func readCSR(path string) *x509.CertificateRequest {
@@ -243,11 +271,11 @@ func (key *privateKey) marshalKey() *[]byte {
 	if err != nil {
 		errorLog.Fatalf("Failed to marshal private key: %s", err)
 	}
-	if key.password == "" {
+	if key.pwd.string == nil {
 		data := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
 		return &data
 	}
-	block, err := x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", der, []byte(key.password), x509.PEMCipherAES256)
+	block, err := x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", der, []byte(*key.pwd.string), x509.PEMCipherAES256)
 	if err != nil {
 		errorLog.Fatalf("Failed to encrypt private key: %s", err)
 	}
@@ -255,18 +283,18 @@ func (key *privateKey) marshalKey() *[]byte {
 	return &data
 }
 
-func unMarshalKey(der *[]byte, password string) *privateKey {
+func unMarshalKey(der *[]byte, pwd *password) *privateKey {
 	block, _ := pem.Decode(*der)
 	if block == nil || block.Type != "EC PRIVATE KEY" {
 		errorLog.Fatal("Failed to decode private key")
 	}
 	isEncrypted := x509.IsEncryptedPEMBlock(block)
-	if isEncrypted && password == "" {
+	if isEncrypted && pwd.string == nil {
 		errorLog.Fatalln("Failed to decrypt private key: key is encrypted but no password was provided")
-	} else if !isEncrypted && password != "" {
+	} else if !isEncrypted && pwd.string != nil {
 		errorLog.Fatalln("Failed to decode private key: key is not encrypted but a password was provided")
 	}
-	if password == "" {
+	if pwd.string == nil {
 		key, err := x509.ParseECPrivateKey(block.Bytes)
 		if err != nil {
 			errorLog.Fatalf("Failed to parse private key: %s", err)
@@ -277,7 +305,7 @@ func unMarshalKey(der *[]byte, password string) *privateKey {
 	if block == nil || block.Type != "EC PRIVATE KEY" {
 		errorLog.Fatal("Failed to decode private key")
 	}
-	dec, err := x509.DecryptPEMBlock(block, []byte(password))
+	dec, err := x509.DecryptPEMBlock(block, []byte(*pwd.string))
 	if err != nil {
 		errorLog.Fatalf("Failed to decrypt private key: %s", err)
 	}
@@ -285,10 +313,10 @@ func unMarshalKey(der *[]byte, password string) *privateKey {
 	if err != nil {
 		errorLog.Fatalf("Failed to parse decrypted private key: %s", err)
 	}
-	return &privateKey{PrivateKey: key}
+	return &privateKey{PrivateKey: key, pwd: pwd}
 }
 
-func (manifest *certManifest) loadCertChain() {
+func (manifest *certManifest) loadCACert() {
 	if filepath.Dir(manifest.path) != "." {
 		file := filepath.Dir(manifest.path)
 		file = filepath.Join(file, filepath.Base(file))
@@ -296,6 +324,14 @@ func (manifest *certManifest) loadCertChain() {
 			path:        filepath.Dir(manifest.path),
 			Certificate: readCert(file + ".pem"),
 		}
+	} else {
+		manifest.ca = manifest
+	}
+}
+
+func (manifest *certManifest) loadCertChain() {
+	if filepath.Dir(manifest.path) != "." {
+		manifest.loadCACert()
 		manifest.ca.loadCertChain()
 	}
 }
