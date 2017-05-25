@@ -17,13 +17,14 @@ import (
 )
 
 var (
-	versionString = "0.1.1 pre-release"
-	infoLog       = log.New(os.Stderr, "", 0)
-	debugLog      = log.New(ioutil.Discard, "", 0)
-	errorLog      = log.New(os.Stderr, "Error: ", 0)
-	root          string
-	overwrite     bool
-	runTime       time.Time
+	Version   string
+	Build     string
+	infoLog   = log.New(os.Stderr, "", 0)
+	debugLog  = log.New(ioutil.Discard, "", 0)
+	errorLog  = log.New(os.Stderr, "Error: ", 0)
+	root      string
+	overwrite bool
+	runTime   time.Time
 )
 
 func main() {
@@ -35,7 +36,7 @@ func main() {
 	flag.Parse()
 
 	if *version {
-		infoLog.Printf("certshop v%s\n", versionString)
+		infoLog.Printf("certshop %s\nBuilt: %s\nCopyright (C) 2017 VARASYS Limited", Version, Build)
 		os.Exit(0)
 	}
 	if *debug {
