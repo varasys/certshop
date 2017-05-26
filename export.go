@@ -91,7 +91,11 @@ func exportCertificate(args []string) {
 			if _, err = tmpFile.Write(data); err != nil {
 				errorLog.Fatalf("Failed to write to temporary ca file: %s", err)
 			}
-			defer os.Remove(tmpFile.Name())
+			defer func() {
+				if err := os.Remove(tmpFile.Name()); err != nil {
+					errorLog.Fatalf("Failed to close temporary ca file: %s", err)
+				}
+			}()
 			args = append(args, "-certfile", tmpFile.Name())
 		}
 		cmd := exec.Command("openssl", args...)

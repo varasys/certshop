@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha1"
@@ -8,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"flag"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -17,7 +19,11 @@ import (
 )
 
 var (
-	Version   string
+	// Version is populated using "-ldflags -X `git describe --tags`" build option
+	// build using the Makefile to inject this value
+	Version string
+	// Build is populated using "-ldflags -X `date +%FT%T%z`" build option
+	// build using the Makefile to inject this value
 	Build     string
 	infoLog   = log.New(os.Stderr, "", 0)
 	debugLog  = log.New(ioutil.Discard, "", 0)
@@ -29,48 +35,33 @@ var (
 
 func main() {
 	runTime = time.Now().UTC()
-	flag.StringVar(&root, "root", "./", "path to root directory (default=\"./\")")
-	flag.BoolVar(&overwrite, "overwrite", false, "overwrite existing directories (default=false)")
-	version := flag.Bool("version", false, "print version and exit")
-	debug := flag.Bool("debug", false, "show extra debug information (default=false)")
-	flag.Parse()
-
-	if *version {
-		infoLog.Printf("certshop %s\nBuilt: %s\nCopyright (C) 2017 VARASYS Limited", Version, Build)
+	fs := parseMainFlags(os.Args[1:], ".", false, false)
+	if fs.version {
+		infoLog.Printf("certshop %s\nBuilt: %s\nCopyright (C) 2017 Varasys Limited", Version, Build)
 		os.Exit(0)
 	}
-	if *debug {
+	if fs.debug {
 		debugLog = log.New(os.Stderr, "", log.Lshortfile)
 		errorLog.SetFlags(log.Lshortfile)
 	}
-	if absRoot, err := filepath.Abs(root); err != nil {
-		errorLog.Fatalf("Failed to parse root path %s: %s", root, err)
-	} else {
-		root = absRoot
+	debugLog.Printf("Using root directory: %s", fs.root)
+	if err := os.MkdirAll(fs.root, os.FileMode(0755)); err != nil {
+		errorLog.Fatalf("Failed to create root directory %s: %s", fs.root, err)
 	}
-	debugLog.Printf("Using root directory: %s", root)
-	if err := os.MkdirAll(root, os.FileMode(0755)); err != nil {
-		errorLog.Fatalf("Failed to create root directory %s: %s", root, err)
+	if err := os.Chdir(fs.root); err != nil {
+		errorLog.Fatalf("Failed to set root directory to %s: %s", fs.root, err)
 	}
-	if err := os.Chdir(root); err != nil {
-		errorLog.Fatalf("Failed to set root directory to %s: %s", root, err)
-	}
-
-	var subCommand string
-	if len(flag.Args()) < 1 {
-		subCommand = "help"
-	} else {
-		subCommand = flag.Args()[0]
-	}
-	switch subCommand {
+	switch fs.command {
 	case "ca":
-		manifest := createCA(flag.Args()[1:], "ca", "/CN=ca", 10*(365+5))
+		flags := parseCertFlags(fs.args, true, "", "", 0, 10*(365+5))
+		manifest := createCA(flags)
 		manifest.save(newFileWriter())
-		infoLog.Printf("Finished creating ca in %s\n", filepath.Join(root, manifest.path))
+		infoLog.Printf("Finished creating ca in %s\n", filepath.Join(root, flags.path))
 	case "ica":
-		manifest := createCA(flag.Args()[1:], "ca/ica", "/CN=ica", 5*(365+5))
+		flags := parseCertFlags(fs.args, true, "", "", 0, 5*(365+5))
+		manifest := createCA(flags)
 		manifest.save(newFileWriter())
-		infoLog.Printf("Finished creating ica in %s\n", filepath.Join(root, manifest.path))
+		infoLog.Printf("Finished creating ica in %s\n", filepath.Join(root, flags.path))
 	case "server":
 		manifest := createCertificate(flag.Args()[1:], "ca/server", "/CN=server", "127.0.0.1,localhost,::1", 365+5,
 			x509.KeyUsageDigitalSignature|x509.KeyUsageKeyEncipherment,
@@ -95,211 +86,171 @@ func main() {
 		manifest.save(newFileWriter())
 		infoLog.Printf("Finished creating signature cert in %s\n", filepath.Join(root, manifest.path))
 	case "csr":
-		manifest := createCSR(flag.Args()[1:])
-		if manifest.path != "" {
-			manifest.save(newFileWriter())
-		} else {
-			writer := newTgzWriter(os.Stdout)
-			defer writer.close()
-			manifest.save(writer)
-		}
+		flags := parseCSRFlags(fs.args, "", "")
+		manifest := createCSR(&flags)
+		writer := newTgzWriter(os.Stdout)
+		defer writer.close()
+		manifest.save(writer)
 		infoLog.Printf("Finished creating certificate signing request")
 	case "export":
 		exportCertificate(flag.Args()[1:])
 	case "kubernetes":
 		createKubernetes(flag.Args()[1:])
 	default:
-		debugLog.Println("Usage: certshop ca | ica | server | client | signature | export")
-		flag.PrintDefaults()
+		infoLog.Println("Usage: certshop ca | ica | server | client | signature | export")
+		fs.PrintDefaults()
 	}
 }
 
-func createCA(args []string, path, defaultDN string, defaultValidity int) *certManifest {
-	debugLog.Printf("Creating Certificate Authority %s\n", path)
-	fs := flag.NewFlagSet("command", flag.PanicOnError)
-	dn := fs.String("dn", defaultDN, "certificate subject")
-	maxPathLength := fs.Int("maxPathLength", 0, "max path length")
-	validity := fs.Int("validity", defaultValidity, "certificate duration in days")
-	subjectPass := &password{}
-	fs.Var(subjectPass, "subjectPass", "subject private key password")
-	issuerPass := &password{}
-	fs.Var(issuerPass, "issuerPass", "issuer private key password")
-	csrFile := fs.String("csrFile", "", "certificate signing request file")
-
-	if err := fs.Parse(args); err != nil {
-		errorLog.Fatalf("Failed to parse command line arguments: %s", err)
-	}
-	if len(fs.Args()) > 1 {
-		errorLog.Fatalf("Invalid path %s", strings.Join(fs.Args(), ","))
-	} else if len(fs.Args()) == 1 {
-		path = filepath.Clean(fs.Arg(0))
-	}
-	if filepath.Dir(path) == "." && *csrFile != "" {
+func createCA(flags *certFlags) certManifest {
+	debugLog.Printf("Creating Certificate Authority %s\n", flags.path)
+	if filepath.Dir(flags.path) == "." && flags.csr {
 		errorLog.Fatalf("Failed to create certificate authority: certificate signing requests can't be used for root certificate authorities")
 	}
 	if !overwrite {
-		if _, err := os.Stat(path); err == nil {
-			errorLog.Fatalf("Directory %s exists, use -overwrite flag to overwrite.", filepath.Join(root, path))
+		if _, err := os.Stat(flags.path); err == nil {
+			errorLog.Fatalf("Directory %s exists, use -overwrite flag to overwrite.", filepath.Join(root, flags.path))
 		}
 	}
 	manifest := certManifest{
-		path: path,
+		path: flags.path,
 		Certificate: &x509.Certificate{
-			IsCA: true,
-			BasicConstraintsValid: true,
-			MaxPathLen:            *maxPathLength,
-			MaxPathLenZero:        *maxPathLength == 0,
-			KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-			ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageOCSPSigning},
-			NotBefore:             runTime,
-			NotAfter:              runTime.Add(time.Duration(*validity*24) * time.Hour),
-			SerialNumber:          generateSerial(),
+			KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+			ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageOCSPSigning},
+			NotBefore:    runTime,
+			NotAfter:     runTime.Add(time.Duration(flags.validity*24) * time.Hour),
+			SerialNumber: generateSerial(),
 		},
 	}
-	if *csrFile != "" {
-		csr := readCSR(*csrFile)
+	if flags.isCA {
+		manifest.IsCA = true
+		manifest.BasicConstraintsValid = true
+		manifest.MaxPathLen = flags.ica
+		manifest.MaxPathLenZero = flags.ica == 0
+	}
+	if flags.csr {
+		reader := bufio.NewReader(os.Stdin)
+		data := []byte{}
+		if n, err := reader.Read(data); n <= 0 || err != io.EOF {
+			errorLog.Fatalf("Failed to read csr from stdin: %s", err)
+		}
+		csr := unMarshalCSR(&data)
 		manifest.publicKey = csr.PublicKey.(*ecdsa.PublicKey)
 		manifest.Subject = csr.Subject
 	} else {
-		manifest.privateKey = &privateKey{generateKey(), subjectPass}
+		manifest.privateKey = &privateKey{generateKey(), &flags.subjectpass}
 		manifest.publicKey = manifest.privateKey.Public().(*ecdsa.PublicKey)
 	}
 	manifest.SubjectKeyId = *hashPublicKey(manifest.publicKey)
-	if filepath.Dir(path) == "." { // self signed cert
+	if filepath.Dir(flags.path) == "." { // self signed cert
 		manifest.ca = &certManifest{
 			path:        ".",
 			Certificate: manifest.Certificate,
 			privateKey:  manifest.privateKey,
 		}
-		manifest.Subject = *parseDN(pkix.Name{}, dn)
+		manifest.Subject = flags.dn.parseDN(pkix.Name{})
 	} else {
 		manifest.loadCACert()
-		keyFile := filepath.Dir(path)
+		keyFile := filepath.Dir(flags.path)
 		keyFile = filepath.Join(keyFile, filepath.Base(keyFile)+"-key.pem")
-		manifest.ca.privateKey = readKey(keyFile, issuerPass)
+		manifest.ca.privateKey = readKey(keyFile, &flags.issuerpass)
 		if manifest.ca.MaxPathLen < 1 || manifest.MaxPathLen > (manifest.ca.MaxPathLen-1) {
 			errorLog.Fatalf("Maximum Path Length of certificate authority exceeded")
 		}
-		manifest.Subject = *parseDN(manifest.ca.Subject, dn)
+		manifest.Subject = flags.dn.parseDN(manifest.ca.Subject)
 	}
 	manifest.AuthorityKeyId = manifest.ca.SubjectKeyId
 	manifest.sign()
-	return &manifest
+	return manifest
 }
 
 func createCertificate(args []string, path, defaultDN, defaultSAN string, defaultValidity int, usage x509.KeyUsage, extUsage []x509.ExtKeyUsage) *certManifest {
-	debugLog.Printf("Creating Certificate %s\n", path)
-	fs := flag.NewFlagSet("command", flag.PanicOnError)
-	dn := fs.String("dn", defaultDN, "certificate subject")
-	validity := fs.Int("validity", defaultValidity, "certificate duration in days")
-	subjectPass := &password{}
-	fs.Var(subjectPass, "subjectPass", "subject private key password")
-	issuerPass := &password{}
-	fs.Var(issuerPass, "issuerPass", "issuer private key password")
-	csrFile := fs.String("csrFile", "", "certificate signing request file")
-	sans := &sanList{}
-	fs.Var(sans, "san", "comma seperated list of subject alternative names")
+	// debugLog.Printf("Creating Certificate %s\n", path)
+	// fs := flag.NewFlagSet("command", flag.PanicOnError)
+	// dn := fs.String("dn", defaultDN, "certificate subject")
+	// validity := fs.Int("validity", defaultValidity, "certificate duration in days")
+	// subjectPass := &password{}
+	// fs.Var(subjectPass, "subjectPass", "subject private key password")
+	// issuerPass := &password{}
+	// fs.Var(issuerPass, "issuerPass", "issuer private key password")
+	// csrFile := fs.String("csrFile", "", "certificate signing request file")
+	// sans := &sanList{}
+	// fs.Var(sans, "san", "comma seperated list of subject alternative names")
 
-	if err := fs.Parse(args); err != nil {
-		errorLog.Fatalf("Failed to parse command line arguments: %s", err)
-	}
-	if len(fs.Args()) > 1 {
-		errorLog.Fatalf("Invalid path %s", strings.Join(fs.Args(), ","))
-	} else if len(fs.Args()) == 1 {
-		path = filepath.Clean(fs.Arg(0))
-	}
-	if !overwrite {
-		if _, err := os.Stat(path); err == nil {
-			errorLog.Fatalf("Directory %s exists, use -overwrite flag to overwrite.", filepath.Join(root, path))
-		}
-	}
-	manifest := certManifest{
-		path: path,
-		Certificate: &x509.Certificate{
-			IsCA:         false,
-			KeyUsage:     usage,
-			ExtKeyUsage:  extUsage,
-			NotBefore:    runTime,
-			NotAfter:     runTime.Add(time.Duration(*validity*24) * time.Hour),
-			SerialNumber: generateSerial(),
-		},
-	}
-	manifest.loadCACert()
-	if *csrFile != "" {
-		csr := readCSR(*csrFile)
-		manifest.publicKey = csr.PublicKey.(*ecdsa.PublicKey)
-		manifest.Subject = csr.Subject
-		manifest.IPAddresses = csr.IPAddresses
-		manifest.EmailAddresses = csr.EmailAddresses
-		manifest.DNSNames = csr.DNSNames
-	} else {
-		if sans.sans == nil {
-			_ = sans.Set(defaultSAN)
-		}
-		manifest.privateKey = &privateKey{generateKey(), subjectPass}
-		manifest.publicKey = manifest.privateKey.Public().(*ecdsa.PublicKey)
-		manifest.Subject = *parseDN(manifest.ca.Subject, dn)
-		manifest.IPAddresses = sans.ip
-		manifest.EmailAddresses = sans.email
-		manifest.DNSNames = sans.dns
-	}
-	manifest.SubjectKeyId = *hashPublicKey(manifest.publicKey)
-	keyFile := filepath.Dir(path)
-	keyFile = filepath.Join(keyFile, filepath.Base(keyFile)+"-key.pem")
-	manifest.ca.privateKey = readKey(keyFile, issuerPass)
-	manifest.AuthorityKeyId = manifest.ca.SubjectKeyId
-	manifest.sign()
+	// if err := fs.Parse(args); err != nil {
+	// 	errorLog.Fatalf("Failed to parse command line arguments: %s", err)
+	// }
+	// if len(fs.Args()) > 1 {
+	// 	errorLog.Fatalf("Invalid path %s", strings.Join(fs.Args(), ","))
+	// } else if len(fs.Args()) == 1 {
+	// 	path = filepath.Clean(fs.Arg(0))
+	// }
+	// if !overwrite {
+	// 	if _, err := os.Stat(path); err == nil {
+	// 		errorLog.Fatalf("Directory %s exists, use -overwrite flag to overwrite.", filepath.Join(root, path))
+	// 	}
+	// }
+	// manifest := certManifest{
+	// 	path: path,
+	// 	Certificate: &x509.Certificate{
+	// 		IsCA:         false,
+	// 		KeyUsage:     usage,
+	// 		ExtKeyUsage:  extUsage,
+	// 		NotBefore:    runTime,
+	// 		NotAfter:     runTime.Add(time.Duration(*validity*24) * time.Hour),
+	// 		SerialNumber: generateSerial(),
+	// 	},
+	// }
+	// manifest.loadCACert()
+	// if *csrFile != "" {
+	// 	csr := readCSR(*csrFile)
+	// 	manifest.publicKey = csr.PublicKey.(*ecdsa.PublicKey)
+	// 	manifest.Subject = csr.Subject
+	// 	manifest.IPAddresses = csr.IPAddresses
+	// 	manifest.EmailAddresses = csr.EmailAddresses
+	// 	manifest.DNSNames = csr.DNSNames
+	// } else {
+	// 	if sans.raw == nil {
+	// 		_ = sans.Set(defaultSAN)
+	// 	}
+	// 	manifest.privateKey = &privateKey{generateKey(), subjectPass}
+	// 	manifest.publicKey = manifest.privateKey.Public().(*ecdsa.PublicKey)
+	// 	manifest.Subject = dn.parseDN(manifest.ca.Subject)
+	// 	manifest.IPAddresses = sans.ip
+	// 	manifest.EmailAddresses = sans.email
+	// 	manifest.DNSNames = sans.dns
+	// }
+	// manifest.SubjectKeyId = *hashPublicKey(manifest.publicKey)
+	// keyFile := filepath.Dir(path)
+	// keyFile = filepath.Join(keyFile, filepath.Base(keyFile)+"-key.pem")
+	// manifest.ca.privateKey = readKey(keyFile, issuerPass)
+	// manifest.AuthorityKeyId = manifest.ca.SubjectKeyId
+	// manifest.sign()
+	manifest := certManifest{}
 	return &manifest
 }
 
-func createCSR(args []string) *csrManifest {
-	fs := flag.NewFlagSet("command", flag.PanicOnError)
-	dn := fs.String("dn", "", "certificate subject (required)")
-	keyFile := fs.String("keyFile", "", "private key file (optional)")
-	keyPass := &password{}
-	fs.Var(keyPass, "keyPass", "private key password")
-	sans := &sanList{}
-	fs.Var(sans, "sans", "comma seperated list of subject alternative names")
-	if err := fs.Parse(args); err != nil {
-		errorLog.Fatalf("Failed to parse command line arguments: %s", err)
-	}
-	if *dn == "" {
-		errorLog.Fatalf("Distinguished Name required (ie. -dn=\"/CN=ACME\")")
-	}
-	var path string
-	switch len(fs.Args()) {
-	case 0:
-		path = ""
-	case 1:
-		path = fs.Args()[0]
-	default:
-		errorLog.Fatalf("Invalid path %s", strings.Join(fs.Args(), ","))
-	}
-	var key *privateKey
-	if *keyFile == "" {
-		key = &privateKey{generateKey(), keyPass}
-	} else {
-		key = readKey(*keyFile, keyPass)
-	}
+func createCSR(flags *csrFlags) csrManifest {
+	key := &privateKey{generateKey(), &flags.keyPass}
 	manifest := csrManifest{
-		path:       path,
+		path:       flags.path,
 		privateKey: key,
 		CertificateRequest: &x509.CertificateRequest{
-			Subject:            *parseDN(pkix.Name{}, dn),
+			Subject:            flags.dn.parseDN(pkix.Name{}),
 			SignatureAlgorithm: x509.ECDSAWithSHA384,
 			PublicKeyAlgorithm: x509.ECDSA,
 			PublicKey:          key.PrivateKey.Public(),
-			DNSNames:           sans.dns,
-			EmailAddresses:     sans.email,
-			IPAddresses:        sans.ip,
+			DNSNames:           flags.sans.dns,
+			EmailAddresses:     flags.sans.email,
+			IPAddresses:        flags.sans.ip,
 		},
 	}
 	if der, err := x509.CreateCertificateRequest(rand.Reader, manifest.CertificateRequest, manifest.PrivateKey); err != nil {
 		errorLog.Fatalf("Failed to sign certificate signing request: %s", err)
-	} else {
+	} else { // else is required so value of der is available
 		manifest.CertificateRequest.Raw = der
 	}
-	return &manifest
+	return manifest
 }
 
 func hashPublicKey(key *ecdsa.PublicKey) *[]byte {
@@ -318,4 +269,118 @@ func hashPublicKey(key *ecdsa.PublicKey) *[]byte {
 	hash := sha1.Sum(publicKeyInfo.PublicKey.RightAlign())
 	slice := hash[:]
 	return &slice
+}
+
+type mainFlags struct {
+	*flag.FlagSet
+	root      string
+	overwrite bool
+	version   bool
+	debug     bool
+	command   string
+	args      []string
+}
+
+func parseMainFlags(args []string, root string, overwrite, debug bool) mainFlags {
+	fs := mainFlags{FlagSet: flag.NewFlagSet("main", flag.PanicOnError)}
+	fs.StringVar(&fs.root, "root", root, "certificate tree root directory")
+	fs.BoolVar(&fs.overwrite, "overwrite", overwrite, "don't abort if output directory already exists")
+	fs.BoolVar(&fs.version, "version", false, "show program version")
+	fs.BoolVar(&fs.debug, "debug", false, "output extra debugging information")
+	if err := fs.Parse(args); err != nil {
+		errorLog.Fatalf("Failed to parse command line options: %s", err)
+	}
+	if root, err := filepath.Abs(fs.root); err != nil {
+		errorLog.Fatalf("Failed to parse root path %s: %s", fs.root, err)
+	} else {
+		fs.root = root
+	}
+	if len(fs.Args()) < 1 {
+		errorLog.Fatalf("Failed to parse command: %s", strings.Join(args, " "))
+	}
+	fs.command = fs.Args()[0]
+	fs.args = fs.Args()[1:]
+	return fs
+}
+
+type certFlags struct {
+	flag.FlagSet
+	dn          distName
+	sans        sanList
+	ica         int
+	validity    int
+	subjectpass password
+	issuerpass  password
+	path        string
+	isCA        bool
+	csr         bool
+}
+
+func parseCertFlags(args []string, isCA bool, dn, san string, ica, validity int) *certFlags {
+	fs := certFlags{FlagSet: *flag.NewFlagSet("ca", flag.PanicOnError)}
+	fs.isCA = isCA
+	fs.Var(&fs.dn, "dn", "subject distunguished name")
+	fs.Var(&fs.sans, "san", "comma separated list of subject alternative names (ipv4, ipv6, dns or email)")
+	if isCA {
+		fs.IntVar(&fs.ica, "ica", ica, "maximum number of subordinate intermediate certificate authorities allowed")
+	}
+	fs.BoolVar(&fs.csr, "csr", false, "create certificate from certificate signing request provided via stdin")
+	fs.IntVar(&fs.validity, "validity", validity, "validity of the certificate in days")
+	fs.Var(&fs.subjectpass, "subjectpass", "password for the subject private key")
+	fs.Var(&fs.issuerpass, "issuerpass", "password for the issuer private key")
+	if err := fs.Parse(args); err != nil {
+		errorLog.Fatalf("Failed to parse command line options: %s", err)
+	} else if len(fs.Args()) != 1 {
+		errorLog.Fatalf("Failed to parse certificate path: %s", strings.Join(fs.Args(), " "))
+	}
+	fs.path = filepath.Clean(fs.Args()[0])
+	if fs.dn.string == nil {
+		if dn != "" {
+			fs.dn.Set(dn) // TODO why isn't compiler complaining about not checking err?
+		} else {
+			_ = fs.dn.Set("/CN=" + filepath.Base(fs.path))
+		}
+
+	}
+	if fs.sans.string == nil {
+		fs.sans = newSanList(san)
+	}
+	return &fs
+}
+
+type csrFlags struct {
+	flag.FlagSet
+	dn      distName
+	sans    sanList
+	keyPass password
+	path    string
+}
+
+func parseCSRFlags(args []string, dn, san string) csrFlags {
+	fs := csrFlags{FlagSet: *flag.NewFlagSet("csr", flag.PanicOnError)}
+	fs.Var(&fs.dn, "dn", "subject distinguished name")
+	fs.Var(&fs.sans, "san", "comma separated list of subject alternative names (ipv4, ipv6, dns or email)")
+	fs.Var(&fs.keyPass, "keyPass", "aes-256 encrypt private key with password")
+	if err := fs.Parse(args); err != nil {
+		errorLog.Fatalf("Failed to parse command line options: %s", err)
+	}
+	if fs.dn.string == nil {
+		fs.dn.string = &dn
+	}
+	if fs.sans.string == nil {
+		fs.sans = newSanList(san)
+	}
+	cn := fs.dn.parseDN(pkix.Name{}).CommonName
+	if cn == "" {
+		errorLog.Fatalf("Failed to parse common name from -dn flag: %s", *fs.dn.string)
+	}
+	switch len(fs.Args()) {
+	case 0:
+		fs.path = cn
+	case 1:
+		fs.path = fs.Args()[0]
+	default:
+		errorLog.Fatalf("Failed to parse command line options: unknown options %s", strings.Join(fs.Args(), " "))
+	}
+	return fs
 }

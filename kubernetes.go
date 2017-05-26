@@ -11,9 +11,9 @@ func createKubernetes(args []string) {
 		errorLog.Fatalf("Failed to parse command line arguments: %s", err)
 	}
 
-	createCA(nil, "etcd-server-ca", "/CN=etcd-server", 5*(365+5))
+	// createCA(nil, "etcd-server-ca", "/CN=etcd-server", 5*(365+5))
 
-	createCA(nil, "etcd-client-ca", "/CN=etcd-client", 5*(365+5))
+	// createCA(nil, "etcd-client-ca", "/CN=etcd-client", 5*(365+5))
 
 	// createCA([]string{"-maxPathLength=1"}, "ca", "/CN=kubernetes-ca", 10*365+5)
 	// createCA(nil, "ca/etcd-peer-ica", "/CN=etcd-peer-ica", 5*365+5)

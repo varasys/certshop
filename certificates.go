@@ -33,10 +33,14 @@ type csrManifest struct {
 }
 
 type sanList struct {
-	sans  *string
+	*string
 	ip    []net.IP
 	email []string
 	dns   []string
+}
+
+type distName struct {
+	*string
 }
 
 type privateKey struct {
@@ -46,6 +50,22 @@ type privateKey struct {
 
 type password struct {
 	*string
+}
+
+func (dn *distName) Get() interface{} {
+	return dn.string
+}
+
+func (dn *distName) String() string {
+	if dn.string != nil {
+		return *dn.string
+	}
+	return ""
+}
+
+func (dn *distName) Set(val string) error {
+	dn.string = &val
+	return nil
 }
 
 func (pwd *password) Get() interface{} {
@@ -65,19 +85,25 @@ func (pwd *password) Set(val string) error {
 }
 
 func (sans *sanList) Get() interface{} {
-	return sans
+	return sans.string
 }
 
 func (sans *sanList) String() string {
-	if sans.sans != nil {
-		return *sans.sans
+	if sans != nil && sans.string != nil {
+		return *sans.string
 	}
 	return ""
 }
 
+func newSanList(sans string) sanList {
+	list := sanList{}
+	list.Set(sans)
+	return list
+}
+
 func (sans *sanList) Set(val string) error {
 	debugLog.Printf("Parsing Subject Alternative Names: %s\n", val)
-	sans.sans = &val
+	sans.string = &val
 	for _, h := range strings.Split(val, ",") {
 		h = strings.TrimSpace(h)
 		if ip := net.ParseIP(h); ip != nil {
@@ -107,17 +133,17 @@ func generateKey() *ecdsa.PrivateKey {
 	return key
 }
 
-func parseDN(issuer pkix.Name, dn *string) *pkix.Name {
-	debugLog.Printf("Parsing Distinguished Name: %s\n", *dn)
-	issuer.CommonName = ""
-	for _, element := range strings.Split(strings.Trim(*dn, "/"), "/") {
+func (dn distName) parseDN(template pkix.Name) pkix.Name {
+	debugLog.Printf("Parsing Distinguished Name: %s\n", dn.String())
+	template.CommonName = ""
+	for _, element := range strings.Split(strings.Trim(dn.String(), "/"), "/") {
 		pair := strings.Split(element, "=")
 		if len(pair) != 2 {
 			errorLog.Fatalf("Failed to parse distinguised name: malformed element %s in dn", element)
 		}
 		pair[0] = strings.ToUpper(pair[0])
 		if pair[0] == "CN" {
-			issuer.CommonName = pair[1]
+			template.CommonName = pair[1]
 		} else {
 			value := []string{}
 			if pair[1] != "" {
@@ -125,24 +151,21 @@ func parseDN(issuer pkix.Name, dn *string) *pkix.Name {
 			}
 			switch pair[0] {
 			case "C": // countryName
-				issuer.Country = value
+				template.Country = value
 			case "L": // localityName
-				issuer.Locality = value
+				template.Locality = value
 			case "ST": // stateOrProvinceName
-				issuer.Province = value
+				template.Province = value
 			case "O": // organizationName
-				issuer.Organization = value
+				template.Organization = value
 			case "OU": // organizationalUnitName
-				issuer.OrganizationalUnit = value
+				template.OrganizationalUnit = value
 			default:
 				errorLog.Fatalf("Failed to parse distinguised name: unknown element %s", element)
 			}
 		}
 	}
-	if issuer.CommonName == "" {
-		errorLog.Fatalf("Failed to parse common name from %s", *dn)
-	}
-	return &issuer
+	return template
 }
 
 func parseEmailAddress(address string) (email *mail.Address) {
@@ -193,14 +216,8 @@ func saveCert(dest pkiWriter, manifest *certManifest, path string) {
 }
 
 func (manifest *csrManifest) save(dest pkiWriter) {
-	var baseName string
-	if manifest.path == "" {
-		baseName = "csr"
-	} else {
-		baseName = filepath.Join(manifest.path, filepath.Base(manifest.path))
-	}
-	saveKey(dest, manifest.privateKey, baseName+"-key.pem")
-	saveCSR(dest, &(manifest.CertificateRequest.Raw), baseName+"-csr.pem")
+	saveKey(dest, manifest.privateKey, filepath.Join(manifest.path, "key.pem"))
+	saveCSR(dest, &(manifest.CertificateRequest.Raw), filepath.Join(manifest.path, "csr.pem"))
 }
 
 func saveCSR(dest pkiWriter, der *[]byte, path string) {

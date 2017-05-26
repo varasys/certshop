@@ -19,7 +19,7 @@
             "host": "127.0.0.1",
             "program": "${fileDirname}",
             "env": {},
-            "args": ["-debug", "-overwrite", "ca", "-csrFile=tossme/tossme-csr.pem", "ca"],
+            "args": ["-debug", "-overwrite", "ca", "ca"],
             "showLog": true
         },
         {
@@ -58,7 +58,7 @@
             "host": "127.0.0.1",
             "program": "${fileDirname}",
             "env": {},
-            "args": ["csr", "-dn=/CN=ACME"],
+            "args": ["csr", "-dn=/CN=tossme"],
             "showLog": true
         },
         {
