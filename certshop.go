@@ -93,7 +93,7 @@ func main() {
 		manifest.save(writer)
 		infoLog.Printf("Finished creating certificate signing request")
 	case "export":
-		exportCertificate(flag.Args()[1:])
+		exportCertificate(parseExportFlags(fs.args))
 	case "kubernetes":
 		createKubernetes(flag.Args()[1:])
 	default:
