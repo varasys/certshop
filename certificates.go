@@ -97,7 +97,7 @@ func (sans *sanList) String() string {
 
 func newSanList(sans string) sanList {
 	list := sanList{}
-	list.Set(sans)
+	_ = list.Set(sans)
 	return list
 }
 
@@ -241,13 +241,13 @@ func readKey(path string, pwd *password) *privateKey {
 	return unMarshalKey(&der, pwd)
 }
 
-func readCSR(path string) *x509.CertificateRequest {
-	der, err := ioutil.ReadFile(path)
-	if err != nil {
-		errorLog.Fatalf("Failed to read certificate signing request file %s: %s", filepath.Join(root, path), err)
-	}
-	return unMarshalCSR(&der)
-}
+// func readCSR(path string) *x509.CertificateRequest {
+// 	der, err := ioutil.ReadFile(path)
+// 	if err != nil {
+// 		errorLog.Fatalf("Failed to read certificate signing request file %s: %s", filepath.Join(root, path), err)
+// 	}
+// 	return unMarshalCSR(&der)
+// }
 
 func marshalCert(cert *x509.Certificate) *[]byte {
 	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})

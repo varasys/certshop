@@ -336,7 +336,7 @@ func parseCertFlags(args []string, isCA bool, dn, san string, ica, validity int)
 	fs.path = filepath.Clean(fs.Args()[0])
 	if fs.dn.string == nil {
 		if dn != "" {
-			fs.dn.Set(dn) // TODO why isn't compiler complaining about not checking err?
+			_ = fs.dn.Set(dn)
 		} else {
 			_ = fs.dn.Set("/CN=" + filepath.Base(fs.path))
 		}
