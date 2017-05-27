@@ -45,7 +45,7 @@ func (writer *describeWriter) processFlags(flags *describeFlags) {
 			errorLog.Fatalf("Failed to read from stdin: %s", err)
 		}
 		writer.writeHeader(0, "Processing from stdin")
-		writer.processDER(&data, flags.key, flags.crt, flags.csr)
+		writer.processDER(data, flags.key, flags.crt, flags.csr)
 	} else {
 		for i := range flags.paths {
 			_ = filepath.Walk(flags.paths[i],
@@ -57,7 +57,7 @@ func (writer *describeWriter) processFlags(flags *describeFlags) {
 						if data, err := ioutil.ReadFile(path); err != nil {
 							writer.writeError(0, err.Error())
 						} else {
-							writer.processDER(&data, flags.key, flags.crt, flags.csr)
+							writer.processDER(data, flags.key, flags.crt, flags.csr)
 						}
 					}
 					return nil
@@ -66,8 +66,8 @@ func (writer *describeWriter) processFlags(flags *describeFlags) {
 	}
 }
 
-func (writer *describeWriter) processDER(der *[]byte, key, crt, csr bool) {
-	rest := *der
+func (writer *describeWriter) processDER(der []byte, key, crt, csr bool) {
+	rest := der
 	var block *pem.Block
 	for block, rest = pem.Decode(rest); block != nil; {
 		_ = rest // to prevent compiler complaints about inneffectual assignment
@@ -105,7 +105,6 @@ type describeWriter struct {
 }
 
 func newDescribeWriter(stdout bool, stderr bool) describeWriter {
-	return describeWriter{*bufio.NewWriter(io.MultiWriter(os.Stdout, os.Stderr))}
 	writers := make([]io.Writer, 2)
 	if stdout {
 		writers = append(writers, os.Stdout)

@@ -147,7 +147,7 @@ func createCertificate(flags *certFlags) certManifest {
 	}
 	if flags.csr.string != nil {
 		der := flags.csr.Get().([]byte)
-		csr := unMarshalCSR(&der)
+		csr := unMarshalCSR(der)
 		manifest.publicKey = csr.PublicKey.(*ecdsa.PublicKey)
 		manifest.Subject = csr.Subject
 		manifest.IPAddresses = csr.IPAddresses
@@ -158,7 +158,7 @@ func createCertificate(flags *certFlags) certManifest {
 		manifest.publicKey = manifest.privateKey.Public().(*ecdsa.PublicKey)
 		manifest.Subject = flags.dn.parseDN(pkix.Name{})
 	}
-	manifest.SubjectKeyId = *hashPublicKey(manifest.publicKey)
+	manifest.SubjectKeyId = hashPublicKey(manifest.publicKey)
 	if flags.isSelfSigned {
 		manifest.ca = &certManifest{
 			path:        ".",
@@ -177,8 +177,8 @@ func createCertificate(flags *certFlags) certManifest {
 	}
 	manifest.AuthorityKeyId = manifest.ca.SubjectKeyId
 	if flags.local || flags.localhost {
-		concatIP(&manifest.IPAddresses, "127.0.0.1", "::1")
-		concatDNS(&manifest.DNSNames, "localhost")
+		concatIP(manifest.IPAddresses, "127.0.0.1", "::1")
+		concatDNS(manifest.DNSNames, "localhost")
 	}
 	if flags.localhost {
 		if host, err := os.Hostname(); err != nil {
@@ -187,7 +187,7 @@ func createCertificate(flags *certFlags) certManifest {
 			if manifest.Subject.CommonName == "" {
 				manifest.Subject.CommonName = host
 			} else {
-				concatDNS(&manifest.DNSNames, host)
+				concatDNS(manifest.DNSNames, host)
 			}
 		}
 	}
@@ -217,7 +217,7 @@ func createCSR(flags *csrFlags) csrManifest {
 	return manifest
 }
 
-func hashPublicKey(key *ecdsa.PublicKey) *[]byte {
+func hashPublicKey(key *ecdsa.PublicKey) []byte {
 	der, err := x509.MarshalPKIXPublicKey(key)
 	if err != nil {
 		errorLog.Fatalf("Failed to marshal public key")
@@ -232,7 +232,7 @@ func hashPublicKey(key *ecdsa.PublicKey) *[]byte {
 	}
 	hash := sha1.Sum(publicKeyInfo.PublicKey.RightAlign())
 	slice := hash[:]
-	return &slice
+	return slice
 }
 
 type mainFlags struct {

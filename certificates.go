@@ -144,18 +144,18 @@ func (sans *sanList) Set(val string) error {
 	for _, h := range strings.Split(val, ",") {
 		h = strings.TrimSpace(h)
 		if ip := net.ParseIP(h); ip != nil {
-			concatIP(&sans.ip, ip)
+			concatIP(sans.ip, ip)
 		} else if email := parseEmailAddress(h); email != nil {
-			concatEmail(&sans.email, email)
+			concatEmail(sans.email, email)
 		} else {
-			concatDNS(&sans.dns, h)
+			concatDNS(sans.dns, h)
 		}
 	}
 	return nil
 }
 
-func concatIP(ipList *[]net.IP, vals ...interface{}) {
-	list := *ipList
+func concatIP(ipList []net.IP, vals ...interface{}) {
+	list := ipList
 ValLoop:
 	for i := range vals {
 		var ip net.IP
@@ -178,8 +178,8 @@ ValLoop:
 	}
 }
 
-func concatDNS(dnsList *[]string, vals ...string) {
-	list := *dnsList
+func concatDNS(dnsList []string, vals ...string) {
+	list := dnsList
 ValLoop:
 	for i := range vals {
 		if vals[i] != "" {
@@ -193,8 +193,8 @@ ValLoop:
 	}
 }
 
-func concatEmail(emailList *[]string, vals ...interface{}) {
-	list := *emailList
+func concatEmail(emailList []string, vals ...interface{}) {
+	list := emailList
 ValLoop:
 	for i := range vals {
 		var address *mail.Address
@@ -316,10 +316,10 @@ func saveCert(dest pkiWriter, manifest *certManifest, path string) {
 
 func (manifest *csrManifest) save(dest pkiWriter) {
 	saveKey(dest, manifest.privateKey, filepath.Join(manifest.path, "key.pem"))
-	saveCSR(dest, &(manifest.CertificateRequest.Raw), filepath.Join(manifest.path, "csr.pem"))
+	saveCSR(dest, manifest.CertificateRequest.Raw, filepath.Join(manifest.path, "csr.pem"))
 }
 
-func saveCSR(dest pkiWriter, der *[]byte, path string) {
+func saveCSR(dest pkiWriter, der []byte, path string) {
 	debugLog.Printf("Saving certificate signing request: %s\n", path)
 	dest.writeData(marshalCSR(der), path, os.FileMode(0644), overwrite)
 }
@@ -329,7 +329,7 @@ func readCert(path string) *x509.Certificate {
 	if err != nil {
 		errorLog.Fatalf("Failed to read certificate file %s: %s", filepath.Join(root, path), err)
 	}
-	return unMarshalCert(&der)
+	return unMarshalCert(der)
 }
 
 func readKey(path string, pwd *password) *privateKey {
@@ -337,7 +337,7 @@ func readKey(path string, pwd *password) *privateKey {
 	if err != nil {
 		errorLog.Fatalf("Failed to read private key file %s: %s", filepath.Join(root, path), err)
 	}
-	return unMarshalKey(&der, pwd)
+	return unMarshalKey(der, pwd)
 }
 
 // func readCSR(path string) *x509.CertificateRequest {
@@ -348,13 +348,13 @@ func readKey(path string, pwd *password) *privateKey {
 // 	return unMarshalCSR(&der)
 // }
 
-func marshalCert(cert *x509.Certificate) *[]byte {
+func marshalCert(cert *x509.Certificate) []byte {
 	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
-	return &data
+	return data
 }
 
-func unMarshalCert(der *[]byte) *x509.Certificate {
-	block, _ := pem.Decode(*der)
+func unMarshalCert(der []byte) *x509.Certificate {
+	block, _ := pem.Decode(der)
 	if block == nil || block.Type != "CERTIFICATE" {
 		errorLog.Fatal("Failed to decode certificate")
 	}
@@ -365,13 +365,13 @@ func unMarshalCert(der *[]byte) *x509.Certificate {
 	return crt
 }
 
-func marshalCSR(csr *[]byte) *[]byte {
-	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: *csr})
-	return &data
+func marshalCSR(csr []byte) []byte {
+	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr})
+	return data
 }
 
-func unMarshalCSR(der *[]byte) *x509.CertificateRequest {
-	block, _ := pem.Decode(*der)
+func unMarshalCSR(der []byte) *x509.CertificateRequest {
+	block, _ := pem.Decode(der)
 	if block == nil || block.Type != "CERTIFICATE REQUEST" {
 		errorLog.Fatal("Failed to decode certificate request")
 	}
@@ -382,25 +382,25 @@ func unMarshalCSR(der *[]byte) *x509.CertificateRequest {
 	return csr
 }
 
-func (key *privateKey) marshalKey() *[]byte {
+func (key *privateKey) marshalKey() []byte {
 	der, err := x509.MarshalECPrivateKey(key.PrivateKey)
 	if err != nil {
 		errorLog.Fatalf("Failed to marshal private key: %s", err)
 	}
 	if key.pwd.string == nil {
 		data := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
-		return &data
+		return data
 	}
 	block, err := x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", der, []byte(*key.pwd.string), x509.PEMCipherAES256)
 	if err != nil {
 		errorLog.Fatalf("Failed to encrypt private key: %s", err)
 	}
 	data := pem.EncodeToMemory(block)
-	return &data
+	return data
 }
 
-func unMarshalKey(der *[]byte, pwd *password) *privateKey {
-	block, _ := pem.Decode(*der)
+func unMarshalKey(der []byte, pwd *password) *privateKey {
+	block, _ := pem.Decode(der)
 	if block == nil || block.Type != "EC PRIVATE KEY" {
 		errorLog.Fatal("Failed to decode private key")
 	}
@@ -417,7 +417,7 @@ func unMarshalKey(der *[]byte, pwd *password) *privateKey {
 		}
 		return &privateKey{PrivateKey: key}
 	}
-	block, _ = pem.Decode(*der)
+	block, _ = pem.Decode(der)
 	if block == nil || block.Type != "EC PRIVATE KEY" {
 		errorLog.Fatal("Failed to decode private key")
 	}

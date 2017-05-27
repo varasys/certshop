@@ -9,7 +9,7 @@ import (
 )
 
 type pkiWriter interface {
-	writeData(data *[]byte, path string, perms os.FileMode, overwrite bool)
+	writeData(data []byte, path string, perms os.FileMode, overwrite bool)
 	close()
 }
 
@@ -43,21 +43,21 @@ func newFileWriter() *fileWriter {
 	return &fileWriter{}
 }
 
-func (writer *tgzWriter) writeData(data *[]byte, path string, perms os.FileMode, overwrite bool) {
+func (writer *tgzWriter) writeData(data []byte, path string, perms os.FileMode, overwrite bool) {
 	if err := writer.tarWriter.WriteHeader(&tar.Header{
 		Name:    path,
 		Mode:    int64(perms),
-		Size:    int64(len(*data)),
+		Size:    int64(len(data)),
 		ModTime: runTime,
 	}); err != nil {
 		errorLog.Fatalf("Failed to write tar header %s: %s", path, err)
 	}
-	if _, err := writer.tarWriter.Write(*data); err != nil {
+	if _, err := writer.tarWriter.Write(data); err != nil {
 		errorLog.Fatalf("Failed to write tar data %s: %s", path, err)
 	}
 }
 
-func (writer *fileWriter) writeData(data *[]byte, path string, perms os.FileMode, overwrite bool) {
+func (writer *fileWriter) writeData(data []byte, path string, perms os.FileMode, overwrite bool) {
 	flags := os.O_WRONLY | os.O_CREATE
 	if !overwrite {
 		flags = flags | os.O_EXCL
@@ -76,7 +76,7 @@ func (writer *fileWriter) writeData(data *[]byte, path string, perms os.FileMode
 				errorLog.Fatalf("Failed to close file %s: %s", path, err)
 			}
 		}()
-		if _, err = file.Write(*data); err != nil {
+		if _, err = file.Write(data); err != nil {
 			errorLog.Fatalf("Failed to write data to file %s: %s", path, err)
 		}
 	}

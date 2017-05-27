@@ -67,9 +67,9 @@ func exportPEM(writer pkiWriter, flags exportFlags) {
 		for certPath := flags.path; filepath.Base(certPath) != "."; certPath = filepath.Dir(certPath) {
 			file := filepath.Join(certPath, filepath.Base(certPath)+".pem")
 			der := marshalCert(readCert(file))
-			data = append(data, *der...)
+			data = append(data, der...)
 		}
-		writer.writeData(&data, filepath.Join(name, "cert.pem"), os.FileMode(0644), overwrite)
+		writer.writeData(data, filepath.Join(name, "cert.pem"), os.FileMode(0644), overwrite)
 	}
 	if flags.key {
 		if _, err := os.Stat(filepath.Join(flags.path, name+"-key.pem")); err == nil {
@@ -98,10 +98,10 @@ func exportP12(writer pkiWriter, flags exportFlags) {
 	}
 	data := []byte{}
 	for certPath := flags.path; certPath != "."; certPath = filepath.Dir(certPath) {
-		data = append(data, *marshalCert(readCert(filepath.Join(certPath, filepath.Base(certPath)+".pem")))...)
+		data = append(data, marshalCert(readCert(filepath.Join(certPath, filepath.Base(certPath)+".pem")))...)
 	}
 	if flags.ca != "" {
-		data = append(data, *marshalCert(readCert(filepath.Join(flags.ca, filepath.Base(flags.ca)+".pem")))...)
+		data = append(data, marshalCert(readCert(filepath.Join(flags.ca, filepath.Base(flags.ca)+".pem")))...)
 	}
 	tmpFile, err := ioutil.TempFile(os.TempDir(), "certshop")
 	if err != nil {
