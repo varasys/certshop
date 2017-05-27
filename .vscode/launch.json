@@ -19,7 +19,7 @@
             "host": "127.0.0.1",
             "program": "${fileDirname}",
             "env": {},
-            "args": ["-debug", "-overwrite", "ca", "ca"],
+            "args": ["-overwrite", "ca", "-localhost", "ca"],
             "showLog": true
         },
         {
@@ -72,6 +72,19 @@
             "program": "${fileDirname}",
             "env": {},
             "args": ["export", "-format=p12", "-passOut=1234", "ca/ica1/ica2/server"],
+            "showLog": true
+        },
+        {
+            "name": "describe",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "remotePath": "",
+            "port": 2345,
+            "host": "127.0.0.1",
+            "program": "${fileDirname}",
+            "env": {},
+            "args": ["describe", "ca"],
             "showLog": true
         }
     ]

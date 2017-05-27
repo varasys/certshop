@@ -52,6 +52,10 @@ type password struct {
 	*string
 }
 
+type csrPath struct {
+	*string
+}
+
 func (dn *distName) Get() interface{} {
 	return dn.string
 }
@@ -84,6 +88,39 @@ func (pwd *password) Set(val string) error {
 	return nil
 }
 
+func (path *csrPath) Get() interface{} {
+	if path.string == nil {
+		errorLog.Fatal("no csr source specified")
+	}
+	var (
+		csr []byte
+		err error
+	)
+	switch *path.string {
+	case "": // read from stdin
+		if csr, err = ioutil.ReadAll(os.Stdin); err != nil {
+			errorLog.Fatal("Failed to read csr from stdin")
+		}
+	default: // read from a file
+		if csr, err = ioutil.ReadFile(*path.string); err != nil {
+			errorLog.Fatal("Failed to read csr from stdin")
+		}
+	}
+	return csr
+}
+
+func (path *csrPath) String() string {
+	if path.string != nil {
+		return *path.string
+	}
+	return ""
+}
+
+func (path *csrPath) Set(val string) error {
+	path.string = &val
+	return nil
+}
+
 func (sans *sanList) Get() interface{} {
 	return sans.string
 }
@@ -107,14 +144,76 @@ func (sans *sanList) Set(val string) error {
 	for _, h := range strings.Split(val, ",") {
 		h = strings.TrimSpace(h)
 		if ip := net.ParseIP(h); ip != nil {
-			sans.ip = append(sans.ip, ip)
+			concatIP(&sans.ip, ip)
 		} else if email := parseEmailAddress(h); email != nil {
-			sans.email = append(sans.email, email.Address)
+			concatEmail(&sans.email, email)
 		} else {
-			sans.dns = append(sans.dns, h)
+			concatDNS(&sans.dns, h)
 		}
 	}
 	return nil
+}
+
+func concatIP(ipList *[]net.IP, vals ...interface{}) {
+	list := *ipList
+ValLoop:
+	for i := range vals {
+		var ip net.IP
+		switch vals[i].(type) {
+		case string:
+			if ip = net.ParseIP(strings.TrimSpace(vals[i].(string))); ip == nil {
+				errorLog.Fatalf("Failed to parse ip: %s", vals[i])
+			}
+		case net.IP:
+			ip = vals[i].(net.IP)
+		default:
+			errorLog.Fatalf("Failed to parse ip: %s", vals[i])
+		}
+		for j := range list {
+			if list[j].Equal(ip) {
+				continue ValLoop
+			}
+		}
+		list = append(list, ip)
+	}
+}
+
+func concatDNS(dnsList *[]string, vals ...string) {
+	list := *dnsList
+ValLoop:
+	for i := range vals {
+		if vals[i] != "" {
+			for j := range list {
+				if list[j] == vals[i] {
+					continue ValLoop
+				}
+			}
+			list = append(list, vals[i])
+		}
+	}
+}
+
+func concatEmail(emailList *[]string, vals ...interface{}) {
+	list := *emailList
+ValLoop:
+	for i := range vals {
+		var address *mail.Address
+		switch vals[i].(type) {
+		case string:
+			address = parseEmailAddress(vals[i].(string))
+		case mail.Address:
+			tmp := vals[i].(mail.Address)
+			address = &tmp
+		default:
+			errorLog.Fatalf("Failed to parse email: %s", vals[i])
+		}
+		for j := range list {
+			if list[j] == address.String() {
+				continue ValLoop
+			}
+		}
+		list = append(list, address.String())
+	}
 }
 
 func generateSerial() *big.Int {
@@ -170,14 +269,14 @@ func (dn distName) parseDN(template pkix.Name) pkix.Name {
 
 func parseEmailAddress(address string) (email *mail.Address) {
 	// implemented as a seperate function because net.mail.ParseAddress
-	// panics on malformed addresses (appears to be a bug)
+	// panics instead of returning err on malformed addresses (appears to be a bug)
 	defer func() {
 		if recover() != nil {
 			email = nil
 		}
 	}()
-	email, err := mail.ParseAddress(address)
-	if err != nil || email == nil {
+	email, err := mail.ParseAddress(strings.TrimSpace(address))
+	if err != nil {
 		email = nil
 	}
 	return
