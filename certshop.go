@@ -96,8 +96,11 @@ func main() {
 		exportCertificate(parseExportFlags(fs.args))
 	case "describe":
 		flags := parseDescribeFlags(fs.args)
-		writer := newDescribeWriter(true, true)
-		writer.processFlags(flags)
+		writer := newDescribeWriter(os.Stdout)
+		writer.describe(flags)
+		if err := writer.Flush(); err != nil {
+			errorLog.Fatalf("Failed to flush output: %s", err)
+		}
 	case "kubernetes":
 		createKubernetes(flag.Args()[1:])
 	// case "openvpn":
@@ -242,7 +245,7 @@ type mainFlags struct {
 }
 
 func parseMainFlags(args []string, defaultRoot string) mainFlags {
-	fs := mainFlags{FlagSet: *flag.NewFlagSet("main", flag.PanicOnError)}
+	fs := mainFlags{FlagSet: *flag.NewFlagSet("main", flag.ExitOnError)}
 	fs.StringVar(&fs.root, "root", defaultRoot, "certificate tree root directory")
 	fs.BoolVar(&overwrite, "overwrite", false, "don't abort if output directory already exists")
 	fs.BoolVar(&fs.version, "version", false, "show program version")
@@ -284,7 +287,7 @@ type certFlags struct {
 }
 
 func parseCertFlags(args []string, certType certType) *certFlags {
-	fs := certFlags{FlagSet: *flag.NewFlagSet("ca", flag.PanicOnError)}
+	fs := certFlags{FlagSet: *flag.NewFlagSet("ca", flag.ExitOnError)}
 	fs.Var(&fs.dn, "dn", "subject distunguished name")
 	fs.Var(&fs.sans, "san", "comma separated list of subject alternative names (ipv4, ipv6, dns or email)")
 	fs.IntVar(&fs.maxICA, "maxICA", certType.defaultMaxICA, "maximum number of subordinate intermediate certificate authorities allowed")
@@ -342,7 +345,7 @@ type csrFlags struct {
 }
 
 func parseCSRFlags(args []string, dn, san string) csrFlags {
-	fs := csrFlags{FlagSet: *flag.NewFlagSet("csr", flag.PanicOnError)}
+	fs := csrFlags{FlagSet: *flag.NewFlagSet("csr", flag.ExitOnError)}
 	fs.Var(&fs.dn, "dn", "subject distinguished name")
 	fs.Var(&fs.sans, "san", "comma separated list of subject alternative names (ipv4, ipv6, dns or email)")
 	fs.Var(&fs.keyPass, "keyPass", "aes-256 encrypt private key with password")

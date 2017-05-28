@@ -13,6 +13,7 @@ import (
 	"net/mail"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -246,9 +247,20 @@ func (dn distName) parseDN(template pkix.Name) pkix.Name {
 		if len(pair) != 2 {
 			errorLog.Fatalf("Failed to parse distinguised name: malformed element %s in dn", element)
 		}
-		pair[0] = strings.ToUpper(pair[0])
+		pair[0] = strings.ToUpper(strings.TrimSpace(pair[0]))
+		pair[1] = strings.TrimSpace(pair[1])
 		if pair[0] == "CN" {
 			template.CommonName = pair[1]
+		} else if pair[0] == "LN" { // local name
+			template.ExtraNames = append(template.ExtraNames, pkix.AttributeTypeAndValue{
+				Type:  []int{2, 5, 4, 41},
+				Value: pair[1],
+			})
+		} else if pair[0] == "E" { // email address
+			template.ExtraNames = append(template.ExtraNames, pkix.AttributeTypeAndValue{
+				Type:  []int{1, 2, 840, 113549, 1, 9, 1},
+				Value: pair[1],
+			})
 		} else {
 			value := []string{}
 			if pair[1] != "" {
@@ -266,11 +278,39 @@ func (dn distName) parseDN(template pkix.Name) pkix.Name {
 			case "OU": // organizationalUnitName
 				template.OrganizationalUnit = value
 			default:
+				if oid := knownOIDs[pair[0]]; oid != nil {
+					template.ExtraNames = append(template.ExtraNames, pkix.AttributeTypeAndValue{
+						Type:  oid,
+						Value: pair[1],
+					})
+				} else if oid := parseOID(pair[0]); oid != nil {
+					template.ExtraNames = append(template.ExtraNames, pkix.AttributeTypeAndValue{
+						Type:  oid,
+						Value: pair[1],
+					})
+				}
 				errorLog.Fatalf("Failed to parse distinguised name: unknown element %s", element)
 			}
 		}
 	}
 	return template
+}
+
+var knownOIDs = map[string][]int{
+	"LN": []int{2, 5, 4, 41},                //local name
+	"E":  []int{1, 2, 840, 113549, 1, 9, 1}, //email
+}
+
+func parseOID(oidString string) (oid []int) {
+	elements := strings.Split(oidString, ".")
+	oid = make([]int, len(elements))
+	var err error
+	for i := range elements {
+		if oid[i], err = strconv.Atoi(elements[i]); err != nil {
+			return nil
+		}
+	}
+	return oid
 }
 
 func parseEmailAddress(address string) (email *mail.Address) {
