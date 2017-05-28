@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -29,6 +30,43 @@ var (
 	root      string
 	overwrite bool
 	runTime   time.Time
+	certTypes = map[string]certType{
+		"ca": certType{
+			command:         "ca",
+			defaultValidity: 10 * (365 + 5),
+			keyUsage:        x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+			extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageOCSPSigning},
+			defaultMaxICA:   0,
+		},
+		"ica": certType{
+			command:         "ica",
+			defaultValidity: 5 * (365 + 5),
+			keyUsage:        x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+			extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageOCSPSigning},
+			defaultMaxICA:   0,
+		},
+		"server": certType{
+			command:         "server",
+			defaultValidity: 365 + 5,
+			keyUsage:        x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+			extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			defaultMaxICA:   0,
+		},
+		"client": certType{
+			command:         "client",
+			defaultValidity: 365 + 5,
+			keyUsage:        x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+			extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+			defaultMaxICA:   0,
+		},
+		"peer": certType{
+			command:         "peer",
+			defaultValidity: 365 + 5,
+			keyUsage:        x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+			extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+			defaultMaxICA:   0,
+		},
+	}
 )
 
 func main() {
@@ -38,65 +76,18 @@ func main() {
 		infoLog.Printf("certshop %s\nBuilt: %s\nCopyright (c) 2017 VARASYS Limited", Version, Build)
 		os.Exit(0)
 	}
-	if fs.debug {
-		debugLog = log.New(os.Stderr, "", log.Lshortfile)
-		errorLog.SetFlags(log.Lshortfile)
-	}
-	debugLog.Printf("Using root directory: %s", fs.root)
-	if err := os.MkdirAll(fs.root, os.FileMode(0755)); err != nil {
-		errorLog.Fatalf("Failed to create root directory %s: %s", fs.root, err)
-	}
-	if err := os.Chdir(fs.root); err != nil {
-		errorLog.Fatalf("Failed to set root directory to %s: %s", fs.root, err)
-	}
+	setDebug(fs.debug)
+	setRootDir(fs.root)
 	switch fs.command {
-	case "ca":
-		flags := parseCertFlags(fs.args, "ca", "", "", 0, 10*(365+5))
-		manifest := createCertificate(flags)
+	case "ca", "ica", "server", "client", "peer", "signature":
+		flags := parseCertFlags(fs.args, certTypes[fs.command])
+		manifest := createCertManifest(flags)
 		manifest.sign()
 		manifest.save(newFileWriter())
-		infoLog.Printf("Finished creating ca in %s\n", filepath.Join(root, flags.path))
-		describeCert(manifest.Certificate, nil)
-	case "ica":
-		flags := parseCertFlags(fs.args, "ica", "", "", 0, 5*(365+5))
-		manifest := createCertificate(flags)
-		manifest.sign()
-		manifest.save(newFileWriter())
-		infoLog.Printf("Finished creating ca in %s\n", filepath.Join(root, flags.path))
-	case "server":
-		flags := parseCertFlags(fs.args, "server", "", "", 0, 10*(365+5))
-		flags.keyUsage = x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment
-		flags.extKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
-		manifest := createCertificate(flags)
-		manifest.sign()
-		manifest.save(newFileWriter())
-		infoLog.Printf("Finished creating server in %s\n", filepath.Join(root, manifest.path))
-	case "client":
-		flags := parseCertFlags(fs.args, "client", "", "", 0, 10*(365+5))
-		flags.keyUsage = x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment
-		flags.extKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
-		manifest := createCertificate(flags)
-		manifest.sign()
-		manifest.save(newFileWriter())
-		infoLog.Printf("Finished creating client in %s\n", filepath.Join(root, manifest.path))
-	case "peer":
-		flags := parseCertFlags(fs.args, "peer", "", "", 0, 10*(365+5))
-		flags.keyUsage = x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment
-		flags.extKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}
-		manifest := createCertificate(flags)
-		manifest.sign()
-		manifest.save(newFileWriter())
-		infoLog.Printf("Finished creating peer in %s\n", filepath.Join(root, manifest.path))
-	case "signature":
-		flags := parseCertFlags(fs.args, "signature", "", "", 0, 10*(365+5))
-		flags.keyUsage = x509.KeyUsageDigitalSignature
-		manifest := createCertificate(flags)
-		manifest.sign()
-		manifest.save(newFileWriter())
-		infoLog.Printf("Finished creating signature cert in %s\n", filepath.Join(root, manifest.path))
+		infoLog.Printf("Finished creating %s: %s\n", fs.command, flags.path)
 	case "csr":
 		flags := parseCSRFlags(fs.args, "", "")
-		manifest := createCSR(&flags)
+		manifest := createCSRManifest(flags)
 		writer := newTgzWriter(os.Stdout)
 		defer writer.close()
 		manifest.save(writer)
@@ -104,11 +95,9 @@ func main() {
 	case "export":
 		exportCertificate(parseExportFlags(fs.args))
 	case "describe":
-		infoLog.Printf("starting describe thingy")
 		flags := parseDescribeFlags(fs.args)
 		writer := newDescribeWriter(true, true)
-		writer.writeHeader(0, "Starting Describe")
-		writer.processFlags(&flags)
+		writer.processFlags(flags)
 	case "kubernetes":
 		createKubernetes(flag.Args()[1:])
 	// case "openvpn":
@@ -119,7 +108,7 @@ func main() {
 	}
 }
 
-func createCertificate(flags *certFlags) certManifest {
+func createCertManifest(flags *certFlags) certManifest {
 	debugLog.Printf("Creating certificate %s\n", flags.path)
 	if !overwrite {
 		if _, err := os.Stat(flags.path); err == nil {
@@ -158,7 +147,7 @@ func createCertificate(flags *certFlags) certManifest {
 		manifest.publicKey = manifest.privateKey.Public().(*ecdsa.PublicKey)
 		manifest.Subject = flags.dn.parseDN(pkix.Name{})
 	}
-	manifest.SubjectKeyId = hashPublicKey(manifest.publicKey)
+	manifest.SubjectKeyId = hashKeyID(manifest.publicKey)
 	if flags.isSelfSigned {
 		manifest.ca = &certManifest{
 			path:        ".",
@@ -194,7 +183,7 @@ func createCertificate(flags *certFlags) certManifest {
 	return manifest
 }
 
-func createCSR(flags *csrFlags) csrManifest {
+func createCSRManifest(flags csrFlags) csrManifest {
 	key := &privateKey{generateKey(), &flags.keyPass}
 	manifest := csrManifest{
 		path:       flags.path,
@@ -217,7 +206,17 @@ func createCSR(flags *csrFlags) csrManifest {
 	return manifest
 }
 
-func hashPublicKey(key *ecdsa.PublicKey) []byte {
+func hashKeyID(key *ecdsa.PublicKey) []byte {
+	hash := sha1.Sum(marshalKeyBitString(key).RightAlign())
+	return hash[:]
+}
+
+func hashCertFingerprint(cert *x509.Certificate) []byte {
+	hash := sha256.Sum256(cert.Raw)
+	return hash[:]
+}
+
+func marshalKeyBitString(key *ecdsa.PublicKey) asn1.BitString {
 	der, err := x509.MarshalPKIXPublicKey(key)
 	if err != nil {
 		errorLog.Fatalf("Failed to marshal public key")
@@ -230,13 +229,11 @@ func hashPublicKey(key *ecdsa.PublicKey) []byte {
 	if err != nil {
 		errorLog.Fatalf("Failed to unmarshal public key asn.1 bitstring")
 	}
-	hash := sha1.Sum(publicKeyInfo.PublicKey.RightAlign())
-	slice := hash[:]
-	return slice
+	return publicKeyInfo.PublicKey
 }
 
 type mainFlags struct {
-	*flag.FlagSet
+	flag.FlagSet
 	root    string
 	version bool
 	debug   bool
@@ -244,9 +241,9 @@ type mainFlags struct {
 	args    []string
 }
 
-func parseMainFlags(args []string, root string) mainFlags {
-	fs := mainFlags{FlagSet: flag.NewFlagSet("main", flag.PanicOnError)}
-	fs.StringVar(&fs.root, "root", root, "certificate tree root directory")
+func parseMainFlags(args []string, defaultRoot string) mainFlags {
+	fs := mainFlags{FlagSet: *flag.NewFlagSet("main", flag.PanicOnError)}
+	fs.StringVar(&fs.root, "root", defaultRoot, "certificate tree root directory")
 	fs.BoolVar(&overwrite, "overwrite", false, "don't abort if output directory already exists")
 	fs.BoolVar(&fs.version, "version", false, "show program version")
 	fs.BoolVar(&fs.debug, "debug", false, "output extra debugging information")
@@ -276,25 +273,29 @@ type certFlags struct {
 	issuerpass   password
 	path         string
 	csr          csrPath
+	extKeyUsage  []x509.ExtKeyUsage
+	keyUsage     x509.KeyUsage
 	isCA         bool
 	isSelfSigned bool
 	local        bool
 	localhost    bool
-	extKeyUsage  []x509.ExtKeyUsage
-	keyUsage     x509.KeyUsage
+	export       bool
+	describe     bool
 }
 
-func parseCertFlags(args []string, command, dn, san string, maxICA, validity int) *certFlags {
+func parseCertFlags(args []string, certType certType) *certFlags {
 	fs := certFlags{FlagSet: *flag.NewFlagSet("ca", flag.PanicOnError)}
 	fs.Var(&fs.dn, "dn", "subject distunguished name")
 	fs.Var(&fs.sans, "san", "comma separated list of subject alternative names (ipv4, ipv6, dns or email)")
-	fs.IntVar(&fs.maxICA, "maxICA", maxICA, "maximum number of subordinate intermediate certificate authorities allowed")
-	fs.IntVar(&fs.validity, "validity", validity, "validity of the certificate in days")
+	fs.IntVar(&fs.maxICA, "maxICA", certType.defaultMaxICA, "maximum number of subordinate intermediate certificate authorities allowed")
+	fs.IntVar(&fs.validity, "validity", certType.defaultValidity, "validity of the certificate in days")
 	fs.Var(&fs.subjectpass, "subjectpass", "password for the subject private key")
 	fs.Var(&fs.issuerpass, "issuerpass", "password for the issuer private key")
 	fs.Var(&fs.csr, "csr", "create certificate from certificate signing request (file path or leave blank to use stdin)")
-	fs.BoolVar(&fs.local, "local", false, "include 127.0.0.1, ::1, and localhost subject alternative names")
-	fs.BoolVar(&fs.localhost, "localhost", false, "same as -local but also include local hostname subject alternative name")
+	fs.BoolVar(&fs.local, "local", false, "include 127.0.0.1, ::1, and localhost in subject alternative names")
+	fs.BoolVar(&fs.localhost, "localhost", false, "same as -local but also include \"${hostname}\" in subject alternative names")
+	fs.BoolVar(&fs.export, "export", false, "export .tgz file to stdout with certificates")
+	fs.BoolVar(&fs.describe, "describe", true, "output descriptions of what is created to stderr (and stdout if -export=false)")
 	if err := fs.Parse(args); err != nil {
 		errorLog.Fatalf("Failed to parse command line options: %s", err)
 	}
@@ -307,9 +308,7 @@ func parseCertFlags(args []string, command, dn, san string, maxICA, validity int
 		errorLog.Fatalf("Failed to parse certificate path: %s", strings.Join(fs.Args(), " "))
 	}
 	fs.isSelfSigned = filepath.Dir(fs.path) == "."
-	fs.isCA = fs.isSelfSigned || command == "ca" || command == "ica"
-
-	// error checking
+	fs.isCA = fs.isSelfSigned || certType.command == "ca" || certType.command == "ica"
 	if fs.csr.string != nil && fs.isSelfSigned {
 		errorLog.Fatalf("Cannot self sign a certificate made from a csr (since there is no private key)")
 	}
@@ -317,17 +316,15 @@ func parseCertFlags(args []string, command, dn, san string, maxICA, validity int
 		fs.keyUsage = x509.KeyUsageCertSign | x509.KeyUsageCRLSign
 		fs.extKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageOCSPSigning}
 	}
-
 	if fs.dn.string == nil {
-		if dn != "" {
-			_ = fs.dn.Set(dn)
+		if certType.defaultDN != "" {
+			_ = fs.dn.Set(certType.defaultDN)
 		} else {
 			_ = fs.dn.Set("/CN=" + filepath.Base(fs.path))
 		}
-
 	}
 	if fs.sans.string == nil {
-		fs.sans = newSanList(san)
+		fs.sans = newSanList(certType.defaultSAN)
 	}
 	return &fs
 }
@@ -340,6 +337,8 @@ type csrFlags struct {
 	path      string
 	local     bool
 	localhost bool
+	export    bool
+	describe  bool
 }
 
 func parseCSRFlags(args []string, dn, san string) csrFlags {
@@ -349,6 +348,8 @@ func parseCSRFlags(args []string, dn, san string) csrFlags {
 	fs.Var(&fs.keyPass, "keyPass", "aes-256 encrypt private key with password")
 	fs.BoolVar(&fs.local, "local", false, "include 127.0.0.1, ::1, and localhost subject alternative names")
 	fs.BoolVar(&fs.localhost, "localhost", false, "same as -local but also include local hostname subject alternative name")
+	fs.BoolVar(&fs.export, "export", true, "export .tgz file to stdout with certificates")
+	fs.BoolVar(&fs.describe, "describe", true, "output descriptions of what is created to stderr (and stdout if -export=false)")
 	if err := fs.Parse(args); err != nil {
 		errorLog.Fatalf("Failed to parse command line options: %s", err)
 	}
@@ -371,4 +372,31 @@ func parseCSRFlags(args []string, dn, san string) csrFlags {
 		errorLog.Fatalf("Failed to parse command line options: unknown options %s", strings.Join(fs.Args(), " "))
 	}
 	return fs
+}
+
+type certType struct {
+	command         string
+	defaultValidity int
+	keyUsage        x509.KeyUsage
+	extKeyUsage     []x509.ExtKeyUsage
+	defaultMaxICA   int
+	defaultDN       string
+	defaultSAN      string
+}
+
+func setDebug(debug bool) {
+	if debug {
+		debugLog = log.New(os.Stderr, "", log.Lshortfile)
+		errorLog.SetFlags(log.Lshortfile)
+	}
+}
+
+func setRootDir(root string) {
+	debugLog.Printf("Using root directory: %s", root)
+	if err := os.MkdirAll(root, os.FileMode(0755)); err != nil {
+		errorLog.Fatalf("Failed to create root directory %s: %s", root, err)
+	}
+	if err := os.Chdir(root); err != nil {
+		errorLog.Fatalf("Failed to set root directory to %s: %s", root, err)
+	}
 }

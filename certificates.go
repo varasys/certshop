@@ -16,6 +16,12 @@ import (
 	"strings"
 )
 
+var (
+	pemKeyHeader  = "EC PRIVATE KEY"
+	pemCertHeader = "CERTIFICATE"
+	pemCSRHeader  = "CERTIFICATE REQUEST"
+)
+
 type certManifest struct {
 	path string
 
@@ -349,13 +355,13 @@ func readKey(path string, pwd *password) *privateKey {
 // }
 
 func marshalCert(cert *x509.Certificate) []byte {
-	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+	data := pem.EncodeToMemory(&pem.Block{Type: pemCertHeader, Bytes: cert.Raw})
 	return data
 }
 
 func unMarshalCert(der []byte) *x509.Certificate {
 	block, _ := pem.Decode(der)
-	if block == nil || block.Type != "CERTIFICATE" {
+	if block == nil || block.Type != pemCertHeader {
 		errorLog.Fatal("Failed to decode certificate")
 	}
 	crt, err := x509.ParseCertificate(block.Bytes)
@@ -366,13 +372,13 @@ func unMarshalCert(der []byte) *x509.Certificate {
 }
 
 func marshalCSR(csr []byte) []byte {
-	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr})
+	data := pem.EncodeToMemory(&pem.Block{Type: pemCSRHeader, Bytes: csr})
 	return data
 }
 
 func unMarshalCSR(der []byte) *x509.CertificateRequest {
 	block, _ := pem.Decode(der)
-	if block == nil || block.Type != "CERTIFICATE REQUEST" {
+	if block == nil || block.Type != pemCSRHeader {
 		errorLog.Fatal("Failed to decode certificate request")
 	}
 	csr, err := x509.ParseCertificateRequest(block.Bytes)
@@ -388,10 +394,10 @@ func (key *privateKey) marshalKey() []byte {
 		errorLog.Fatalf("Failed to marshal private key: %s", err)
 	}
 	if key.pwd.string == nil {
-		data := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+		data := pem.EncodeToMemory(&pem.Block{Type: pemKeyHeader, Bytes: der})
 		return data
 	}
-	block, err := x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", der, []byte(*key.pwd.string), x509.PEMCipherAES256)
+	block, err := x509.EncryptPEMBlock(rand.Reader, pemKeyHeader, der, []byte(*key.pwd.string), x509.PEMCipherAES256)
 	if err != nil {
 		errorLog.Fatalf("Failed to encrypt private key: %s", err)
 	}
@@ -401,7 +407,7 @@ func (key *privateKey) marshalKey() []byte {
 
 func unMarshalKey(der []byte, pwd *password) *privateKey {
 	block, _ := pem.Decode(der)
-	if block == nil || block.Type != "EC PRIVATE KEY" {
+	if block == nil || block.Type != pemKeyHeader {
 		errorLog.Fatal("Failed to decode private key")
 	}
 	isEncrypted := x509.IsEncryptedPEMBlock(block)
@@ -418,7 +424,7 @@ func unMarshalKey(der []byte, pwd *password) *privateKey {
 		return &privateKey{PrivateKey: key}
 	}
 	block, _ = pem.Decode(der)
-	if block == nil || block.Type != "EC PRIVATE KEY" {
+	if block == nil || block.Type != pemKeyHeader {
 		errorLog.Fatal("Failed to decode private key")
 	}
 	dec, err := x509.DecryptPEMBlock(block, []byte(*pwd.string))

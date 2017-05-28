@@ -9,9 +9,22 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
+	"text/template"
+	"time"
 )
+
+// publicKeyAlgorithms is used to map x509.PublicKeyAlgorithm constants
+// to their string representations
+var publicKeyAlgorithms = map[x509.PublicKeyAlgorithm]string{
+	x509.UnknownPublicKeyAlgorithm: "Unknown",
+	x509.RSA:                       "RSA",
+	x509.DSA:                       "DSA",
+	x509.ECDSA:                     "ECDSA",
+}
 
 type describeFlags struct {
 	flag.FlagSet
@@ -21,7 +34,7 @@ type describeFlags struct {
 	csr   bool
 }
 
-func parseDescribeFlags(args []string) describeFlags {
+func parseDescribeFlags(args []string) *describeFlags {
 	fs := describeFlags{FlagSet: *flag.NewFlagSet("describe", flag.PanicOnError)}
 	fs.BoolVar(&fs.key, "key", false, "display private keys")
 	fs.BoolVar(&fs.crt, "crt", false, "display certificates")
@@ -35,7 +48,7 @@ func parseDescribeFlags(args []string) describeFlags {
 		fs.crt = true
 		fs.csr = true
 	}
-	return fs
+	return &fs
 }
 
 func (writer *describeWriter) processFlags(flags *describeFlags) {
@@ -48,7 +61,7 @@ func (writer *describeWriter) processFlags(flags *describeFlags) {
 		writer.processDER(data, flags.key, flags.crt, flags.csr)
 	} else {
 		for i := range flags.paths {
-			_ = filepath.Walk(flags.paths[i],
+			err := filepath.Walk(flags.paths[i],
 				func(path string, info os.FileInfo, err error) error {
 					if info.IsDir() {
 						writer.writeHeader(0, "Processing directory: "+path)
@@ -62,15 +75,15 @@ func (writer *describeWriter) processFlags(flags *describeFlags) {
 					}
 					return nil
 				})
+			if err != nil {
+				errorLog.Fatalf("Failed to process describe flags: %s", err)
+			}
 		}
 	}
 }
 
 func (writer *describeWriter) processDER(der []byte, key, crt, csr bool) {
-	rest := der
-	var block *pem.Block
-	for block, rest = pem.Decode(rest); block != nil; {
-		_ = rest // to prevent compiler complaints about inneffectual assignment
+	for block, rest := pem.Decode(der); block != nil; block, rest = pem.Decode(rest) {
 		switch block.Type {
 		case "CERTIFICATE":
 			if crt {
@@ -78,7 +91,9 @@ func (writer *describeWriter) processDER(der []byte, key, crt, csr bool) {
 				if err != nil {
 					errorLog.Fatalf("Failed to parse certificate: %s", err)
 				}
-				describeCert(crt, writer)
+				if err = describeCert(writer, crt); err != nil {
+					errorLog.Fatalf("Failed to describe certificate: %s", err)
+				}
 			}
 		case "EC PRIVATE KEY":
 			if key {
@@ -86,7 +101,8 @@ func (writer *describeWriter) processDER(der []byte, key, crt, csr bool) {
 				if err != nil {
 					errorLog.Fatalf("Failed to parse key: %s", err)
 				}
-				describeKey(key, writer)
+				fmt.Fprintf(writer, "%+v", key)
+				_ = writer.Flush()
 			}
 		case "CERTIFICATE REQUEST":
 			if csr {
@@ -94,7 +110,8 @@ func (writer *describeWriter) processDER(der []byte, key, crt, csr bool) {
 				if err != nil {
 					errorLog.Fatalf("Failed to parse key: %s", err)
 				}
-				describeCSR(csr, writer)
+				fmt.Fprintf(writer, "%+v", csr)
+				_ = writer.Flush()
 			}
 		}
 	}
@@ -105,7 +122,7 @@ type describeWriter struct {
 }
 
 func newDescribeWriter(stdout bool, stderr bool) describeWriter {
-	writers := make([]io.Writer, 2)
+	writers := make([]io.Writer, 0, 2)
 	if stdout {
 		writers = append(writers, os.Stdout)
 	}
@@ -116,53 +133,96 @@ func newDescribeWriter(stdout bool, stderr bool) describeWriter {
 }
 
 func (writer *describeWriter) writeHeader(indent int, header string) {
-	fmtString := "%" + string(indent*5) + "s|%s"
+	fmtString := "%" + string(indent*5) + "s|%s\n"
 	if _, err := fmt.Fprintf(writer, fmtString, "", header); err != nil {
 		errorLog.Fatalf("Failed to output describe information: %s", err)
 	}
+	_ = writer.Flush()
 }
 
 func (writer *describeWriter) writeError(indent int, err string) {
-	fmtString := "%" + string(indent*5) + "s|%s"
+	fmtString := "%" + string(indent*5) + "s|%s\n"
 	if _, err := fmt.Fprintf(writer, fmtString, "", err); err != nil {
 		errorLog.Fatalf("Failed to output describe information: %s", err)
 	}
+	_ = writer.Flush()
 }
 
-func (writer *describeWriter) writeValue(indent int, param, value string) {
-	fmtString := "%" + string(indent*5) + "s|%" + string(30-indent*5) + "s|%s\n"
-	if _, err := fmt.Fprintf(writer, fmtString, "", param, value); err != nil {
-		errorLog.Fatalf("Failed to output describe information: %s", err)
-	}
-}
+var subjectTemplate = `  CommonName:          {{.CommonName}}{{if .Organization}}
+  Organization:        {{join .Organization ", "}}{{end}}{{if .OrganizationalUnit}}
+  Organizational Unit: {{join .OrganizationalUnit ", "}}{{end}}{{if .Country}}
+  Country:             {{join .Country ", "}}{{end}}{{if .Province}}
+  State/Province:      {{join .Province ", "}}{{end}}{{if .Locality}}
+  Locality:            {{join .Locality ", "}}{{end}}`
 
-func describeCert(crt *x509.Certificate, writer *describeWriter) {
-	var outWriter describeWriter
-	if writer == nil {
-		outWriter = newDescribeWriter(true, true)
-	} else {
-		outWriter = *writer
-	}
-	outWriter.writeValue(1, "Version", string(crt.Version))
-	outWriter.writeValue(1, "common name", crt.Subject.CommonName)
-}
+var certificateTemplate = `Issuing Certificate Authority Information:
+{{template "subject" .Issuer}}
+  Key ID:              {{encodeHexString .AuthorityKeyId}}
 
-func describeKey(key *ecdsa.PrivateKey, writer *describeWriter) {
-	var outWriter describeWriter
-	if writer == nil {
-		outWriter = newDescribeWriter(true, true)
-	} else {
-		outWriter = *writer
-	}
-	outWriter.writeValue(1, "Public Key ID", "blah")
-}
+Subject Certificate Information:
+  x.509 Version:       {{.Version}}
+  Is CA:               {{.IsCA}}{{if .IsCA}} (max path length = {{.MaxPathLen}}){{end}}
+{{template "subject" .Subject}}
+  DNS Names:           {{join .DNSNames ", "}}
+  Email Addresses:     {{join .EmailAddresses ", "}}
+  IP Addresses:        {{joinIP .IPAddresses    ", "}}
+  Key Algorithm:       {{keyAlgorithm .}}
+  Key ID:              {{encodeHexString .SubjectKeyId}}
+  Serial Number:       {{encodeHexString .SerialNumber.Bytes}}
+  SHA256 Fingerprint:  {{hashCertFingerprint .}}
+  Signature Algorithm: {{.SignatureAlgorithm.String}}
+  Not Before:          {{localTime .NotBefore}}
+  Not After:           {{localTime .NotAfter}}
+  
+  Key Usage:           {{.KeyUsage}}
+  Extended Key Usage:  {{.ExtKeyUsage}}
+`
 
-func describeCSR(csr *x509.CertificateRequest, writer *describeWriter) {
-	var outWriter describeWriter
-	if writer == nil {
-		outWriter = newDescribeWriter(true, true)
-	} else {
-		outWriter = *writer
+//  OCSP Servers:         {{join .OCSPServer ", "}}
+//  Issuing URLs:         {{join .IssuingCertificateURL ", "}}
+//  CRL Dist. Points:     {{join .CRLDistributionPoints ", "}}
+
+func describeCert(writer *describeWriter, crt *x509.Certificate) (err error) {
+	tmpl := template.New("cert").Funcs(template.FuncMap{
+		"encodeHexString": func(data []byte) string {
+			return fmt.Sprintf("% X", data)
+		},
+		"localTime": func(val time.Time) time.Time {
+			return val.Local()
+		},
+		"join": strings.Join,
+		"joinIP": func(val []net.IP, sep string) string {
+			strs := make([]string, len(val))
+			for i := range val {
+				strs[i] = val[i].String()
+			}
+			return strings.Join(strs, sep)
+		},
+		"publicKeyAlgorithms": func(val x509.PublicKeyAlgorithm) string {
+			return publicKeyAlgorithms[val]
+		},
+		"hashCertFingerprint": func(cert *x509.Certificate) string {
+			return fmt.Sprintf("% X", hashCertFingerprint(cert))
+		},
+		"keyAlgorithm": func(crt *x509.Certificate) string {
+			key := crt.PublicKey.(*ecdsa.PublicKey)
+			return fmt.Sprintf("%s (%s)", publicKeyAlgorithms[crt.PublicKeyAlgorithm], key.Curve.Params().Name)
+		},
+	})
+	if _, err = tmpl.Parse(certificateTemplate); err != nil {
+		return err
 	}
-	outWriter.writeValue(1, "Public Key ID", "blah")
+	subject := tmpl.New("subject").Funcs(template.FuncMap{
+		"join": strings.Join,
+	})
+	if _, err = subject.Parse(subjectTemplate); err != nil {
+		return err
+	}
+	if err := tmpl.Execute(writer, crt); err != nil {
+		return err
+	}
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+	return nil
 }
