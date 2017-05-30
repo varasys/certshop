@@ -1,3 +1,61 @@
+# Detailed Instructions
+The certshop command uses the following form:
+
+certshop [global_options] command [command_options] [path]
+
+Where:
+
+- **global_options** are optional and may include:    
+  - **-root="./"** is the directory with the root ca folder (see *path* section below)  
+  - **-overwrite=false** if true will overwrite existing directories and if false will exit with an error instead  
+- **comand** is one of the following actions:  
+  - commands to create certificate authorities:  
+    - **ca** create a certificate authority (self signed root certificate)  
+    - **ica** create an intermediate certificate authority  
+  - commands to create certificates  
+    - **server** create a server certificate  
+    - **client** create a client certificate  
+    - **peer** create a peer certificate (both server and client)  
+    - **signature** create a digital signature certificate  
+  - command to create certificate signing request and associated keys  
+    - **csr** - create a key pair and certificate signing request  
+  - informative commands  
+    - **describe** - output description of a certificate, key, or csr to stderr  
+    - **version** - output certshop version and build date and exit  
+  - export certificates and key sets  
+    - **export** - export certificate and key sets  
+  - automate pki for common infrastructure  
+    - **openvpn** - create and manage a ca for openvpn  
+    - **kubernetes** - create and manage a ca for kubernetes  
+- **command_options** may include the following  (see the description for each command for explination of the detailed meaning of each flag)
+  - **-describe=true** whether to describe to the screen what is created  
+  - **-export={format}** export created certificate and key to stoud where {format} = "tgz" or "p12"  
+  - **-dn=""** foreslash (/) separated distinguished name (DN) for the subject certificate (ie. -dn="/CN=/server/O=ACME Co./OU=Info Security")  
+  - **-sans=""** a comma separated list of ip addresses, email addresses, and hostnames to include as Subject Alternative Names (SAN) (ie. -sans="127.0.0.1,::1,localhost,admin@acme.com")  
+  - **-maxICA=0** is the maximum depth of intermediate certificate authorities (ICA) which may be chained below the subject certificate  
+  - **-validity={days}** is the validity period of the certificate in days starting from the certificate creation time  
+  - **-subjectpass={pwd}** is the password for the subject certificate private key
+  - **-issuerpass={pwd}** is the password for the issuing ca or ica private key  
+  - **-csr={csr_path}** create certificate from certificate signing request (CSR) at csr\_path or from stdin if path is ""  
+  - **-local= 
+
+- **path** is the relative path (from the root director) to the target directory to either retreive or create certificates and keys  
+
+# certshop
+Certshop is a command line program for Linux, Macintosh and Windows to manage x.509 certificates including:
+
+- Create Certificate Authorities  
+- Create Intermediate Certificate Authorities  
+- Create Certificates  
+	- from Certificate Signing Request
+	- Server  
+	- Client  
+	- Peer  
+	- Digital Signature
+- Helpers for setting up certificates for common infrastructure
+	- OpenVPN  
+	- Kubernetes (etcd, flannel and api-server)
+
 # certshop
 
 # Still need to update documentation to reflect updated functionality in kubesec.

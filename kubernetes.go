@@ -8,7 +8,7 @@ func createKubernetes(args []string) {
 	// san := fs.String("san", defaultSAN, "subject alternative names")
 
 	if err := fs.Parse(args); err != nil {
-		errorLog.Fatalf("Failed to parse command line arguments: %s", err)
+		ErrorLog.Fatalf("Failed to parse command line arguments: %s", err)
 	}
 
 	// createCA(nil, "etcd-server-ca", "/CN=etcd-server", 5*(365+5))
