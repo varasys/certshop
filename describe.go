@@ -273,8 +273,11 @@ var templateFunctions = template.FuncMap{
 		case *ecdsa.PublicKey:
 			key := pubKey.(*ecdsa.PublicKey)
 			return fmt.Sprintf("ECDSA (%s)", key.Curve.Params().Name)
+		case ecdsa.PublicKey:
+			key := pubKey.(ecdsa.PublicKey)
+			return fmt.Sprintf("ECDSA (%s)", key.Curve.Params().Name)
 		case *rsa.PublicKey:
-			return "Error: RSA key fourd, but only ECDSA keys are supported"
+			return "Error: RSA key found, but only ECDSA keys are supported"
 		default:
 			return "Unknown Key Algorithm"
 		}

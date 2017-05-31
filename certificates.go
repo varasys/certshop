@@ -170,30 +170,6 @@ OuterLoop:
 	}
 }
 
-// DistName holds the raw string format of the distinguished name
-type DistName struct {
-	string
-}
-
-// Get implements Get() required by the flag.Value interface
-func (dn *DistName) Get() interface{} {
-	return dn.string
-}
-
-// String implements String() required by the flag.Value interface
-func (dn *DistName) String() string {
-	if dn.string != NilString {
-		return dn.string
-	}
-	return ""
-}
-
-// Set implements Set() required by the flag.Value interface
-func (dn *DistName) Set(val string) error {
-	dn.string = val
-	return nil
-}
-
 // ReadCSR reads a .pem format certificate request and returns the .der
 // format bytes
 func ReadCSR(path string) *x509.CertificateRequest {
@@ -371,6 +347,19 @@ func (manifest *CertFlags) Sign() {
 	manifest.SubjectCert = cert
 }
 
+//Sign signs a certificate request
+func (manifest *CSRFlags) Sign() {
+	der, err := x509.CreateCertificateRequest(rand.Reader, manifest.CertificateRequest, manifest.Key)
+	if err != nil {
+		ErrorLog.Fatalf("Failed to sign certificate request: %s", err)
+	}
+	csr, err := x509.ParseCertificateRequest(der)
+	if err != nil {
+		ErrorLog.Fatalf("Failed to load signed certificate request: %s", err)
+	}
+	manifest.CertificateRequest = csr
+}
+
 // Save saves a certificate and associated key to a PKIWriter
 func (manifest *CertFlags) Save(dest PKIWriter) {
 	baseName := filepath.Join(manifest.Path, filepath.Base(manifest.Path))
@@ -393,7 +382,7 @@ func SaveCert(dest PKIWriter, cert *x509.Certificate, path string) {
 }
 
 // Save saves a certificate signing request and associated key to a PKIWwriter
-func (manifest *CSRFlags) Save(dest PKIWriter, pwd string) {
+func (manifest *CSRFlags) Save(dest PKIWriter) {
 	SaveKey(dest, manifest.Key, manifest.Password, filepath.Join(manifest.Path, "key.pem"))
 	SaveCSR(dest, manifest.CertificateRequest.Raw, filepath.Join(manifest.Path, "csr.pem"))
 }

@@ -19,7 +19,7 @@
             "host": "127.0.0.1",
             "program": "${fileDirname}",
             "env": {},
-            "args": ["-overwrite", "ca", "-localhost", "ca"],
+            "args": ["-overwrite", "ca", "ca"],
             "showLog": true
         },
         {
@@ -45,7 +45,7 @@
             "host": "127.0.0.1",
             "program": "${fileDirname}",
             "env": {},
-            "args": ["-overwrite", "server", "-san=127.0.0.1,localhost,::1", "ca/server"],
+            "args": ["-root=play", "-debug", "-overwrite", "server", "-localhost", "ca/server"],
             "showLog": true
         },
         {
@@ -84,7 +84,7 @@
             "host": "127.0.0.1",
             "program": "${fileDirname}",
             "env": {},
-            "args": ["describe", "play/ca/ca.pem"],
+            "args": ["describe", "play/ca"],
             "showLog": true
         }
     ]

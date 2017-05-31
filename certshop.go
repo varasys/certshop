@@ -103,17 +103,16 @@ func main() {
 		fs.Command = NilString
 		switch command {
 		case `ca`, `ica`, `server`, `client`, `peer`, `signature`:
-			manifest := ParseCertFlags(fs.Args, CertTypes[fs.Command])
-			manifest.Path = "Delete this line"
-			// manifest.sign()
-			// manifest.save(newFileWriter())
+			manifest := ParseCertFlags(fs.Args, CertTypes[command])
+			manifest.Sign()
+			manifest.Save(NewFileWriter())
 			InfoLog.Printf("Finished creating %s: %s\n", command, manifest.Path)
 		case `csr`:
 			manifest := ParseCSRFlags(fs.Args)
-			manifest.Path = "Delete this line"
+			manifest.Sign()
 			writer := NewTgzWriter(os.Stdout)
 			defer writer.Close()
-			// manifest.save(writer)
+			manifest.Save(writer)
 			InfoLog.Printf(`Finished creating certificate signing request`)
 		case `version`:
 			InfoLog.Printf("certshop %s\nBuilt: %s\nCopyright (c) 2017 VARASYS Limited", Version, Build)
@@ -268,13 +267,15 @@ func ParseCertFlags(args []string, certType CertType) *CertFlags {
 		NotAfter:     RunTime.Add(time.Duration(*validity*24) * time.Hour),
 		SerialNumber: GenerateSerial(),
 		PublicKey:    fs.SubjectKey.Public(),
+		SubjectKeyId: HashKeyID(fs.SubjectKey.Public().(*ecdsa.PublicKey)),
 		IsCA:         isCA,
 		BasicConstraintsValid: isCA,
 		MaxPathLen:            *maxICA,
 		MaxPathLenZero:        *maxICA == 0,
 	}
+	fs.SubjectCert.SubjectKeyId = HashKeyID(fs.SubjectCert.PublicKey.(*ecdsa.PublicKey))
 	if isCA {
-		fs.SubjectCert.KeyUsage = fs.SubjectCert.KeyUsage | x509.KeyUsageCertSign
+		fs.SubjectCert.KeyUsage = fs.SubjectCert.KeyUsage | x509.KeyUsageCertSign | x509.KeyUsageCRLSign
 		fs.SubjectCert.ExtKeyUsage = AppendExtKeyUsage(fs.SubjectCert.ExtKeyUsage, x509.ExtKeyUsageOCSPSigning)
 	}
 	if isSelfSigned {
@@ -283,12 +284,16 @@ func ParseCertFlags(args []string, certType CertType) *CertFlags {
 	} else {
 		caDir := filepath.Dir(fs.Path)
 		fs.IssuingCert = ReadCert(filepath.Join(caDir, filepath.Base(caDir)+`.pem`))
-		fs.IssuingKey = ReadKey(filepath.Join(caDir, filepath.Base(caDir)+`.pem`), *caPass)
+		fs.IssuingKey = ReadKey(filepath.Join(caDir, filepath.Base(caDir)+`-key.pem`), *caPass)
 	}
+	fs.SubjectCert.AuthorityKeyId = fs.IssuingCert.SubjectKeyId
 	if *inheritDN {
 		fs.SubjectCert.Subject = ParseDN(fs.IssuingCert.Subject, *dn, *cn)
 	} else {
 		fs.SubjectCert.Subject = ParseDN(pkix.Name{}, *dn, *cn)
+	}
+	if fs.SubjectCert.Subject.CommonName == "" {
+		fs.SubjectCert.Subject.CommonName = filepath.Base(fs.Path)
 	}
 	sans := ParseSAN(*san, *cn, *local, *localhost)
 	// as per RFC 6125, published in '2011 "the validator must check SAN
