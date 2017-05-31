@@ -27,28 +27,47 @@ var (
 	CSRHeader = `CERTIFICATE REQUEST`
 )
 
-// CertManifest holds information required to create a signed certificate
-type CertManifest struct {
-	Path string
-	CA   *CertManifest
-	*x509.Certificate
-	*PrivateKey
-	PublicKey *ecdsa.PublicKey
-}
-
-// CSRManifest holds information required to create a certificate
-// signing request
-type CSRManifest struct {
-	Path string
-	*x509.CertificateRequest
-	*PrivateKey
-}
-
 // SANSet helds information about subject alternative names
 type SANSet struct {
 	ip    []net.IP
 	email []string
 	dns   []string
+}
+
+// CertSet is the access point to the file backed certificate, request,
+// and keys persistance manager.
+type CertSet struct {
+	Path               string
+	certificate        *x509.Certificate
+	key                *ecdsa.PrivateKey
+	certificateRequest *x509.CertificateRequest
+}
+
+// Certificate return the x509.Certificate associated with the Path
+// The certificate file will be loaded if not already
+func (set *CertSet) Certificate() *x509.Certificate {
+	if set.certificate == nil && filepath.Base(set.Path) != "." {
+		set.certificate = ReadCert(filepath.Join(set.Path, filepath.Base(set.Path+".pem")))
+	}
+	return set.certificate
+}
+
+// Key return the ecdsa.PrivateKey associated with the Path
+// The key file will be loaded if not already
+func (set *CertSet) Key(pwd string) *ecdsa.PrivateKey {
+	if set.key == nil && filepath.Base(set.Path) != "." {
+		set.key = ReadKey(filepath.Join(set.Path, filepath.Base(set.Path+"-key.pem")), pwd)
+	}
+	return set.key
+}
+
+// CertificateRequest return the x509.CertificateRequest associated with the
+// Path. The certificate request file will be loaded if not already
+func (set *CertSet) CertificateRequest() *x509.CertificateRequest {
+	if set.certificateRequest == nil && filepath.Base(set.Path) != "." {
+		set.certificateRequest = ReadCSR(filepath.Join(set.Path, filepath.Base(set.Path+"-csr.pem")))
+	}
+	return set.certificateRequest
 }
 
 // ParseSAN parses a string listing the subject alternative names, along with
@@ -156,13 +175,6 @@ type DistName struct {
 	string
 }
 
-// PrivateKey holds a private key and associated password
-// the password value is NilString if no password
-type PrivateKey struct {
-	*ecdsa.PrivateKey
-	pwd string
-}
-
 // Get implements Get() required by the flag.Value interface
 func (dn *DistName) Get() interface{} {
 	return dn.string
@@ -184,7 +196,7 @@ func (dn *DistName) Set(val string) error {
 
 // ReadCSR reads a .pem format certificate request and returns the .der
 // format bytes
-func ReadCSR(path string) []byte {
+func ReadCSR(path string) *x509.CertificateRequest {
 	var csr []byte
 	var err error
 	switch path {
@@ -199,11 +211,11 @@ func ReadCSR(path string) []byte {
 			ErrorLog.Fatalf("Failed to read csr from %s: %s", path, err)
 		}
 	}
-	return csr
+	return UnmarshalCSR(csr)
 }
 
 // AppendExtKeyUsage appends a ExtKeyUsage bit excluding duplicates
-func AppendExtKeyUsage(usages []x509.ExtKeyUsage, vals ...x509.ExtKeyUsage) {
+func AppendExtKeyUsage(usages []x509.ExtKeyUsage, vals ...x509.ExtKeyUsage) []x509.ExtKeyUsage {
 ValLoop:
 	for i := range vals {
 		for j := range usages {
@@ -213,6 +225,7 @@ ValLoop:
 		}
 		usages = append(usages, vals[i])
 	}
+	return usages
 }
 
 // GenerateSerial returns a big random number (presumed to be globally unique)
@@ -241,54 +254,56 @@ func GenerateKey() *ecdsa.PrivateKey {
 func ParseDN(template pkix.Name, dn string, cn string) pkix.Name {
 	DebugLog.Printf("Parsing Distinguished Name: %s\n", dn)
 	template.CommonName = ""
-	for _, element := range strings.Split(strings.Trim(dn, "/"), "/") {
-		pair := strings.Split(element, "=")
-		if len(pair) != 2 {
-			ErrorLog.Fatalf("Failed to parse distinguised name: malformed element %s in dn", element)
-		}
-		pair[0] = strings.ToUpper(strings.TrimSpace(pair[0]))
-		pair[1] = strings.TrimSpace(pair[1])
-		if pair[0] == "CN" {
-			template.CommonName = pair[1]
-		} else if pair[0] == "LN" { // local name
-			template.ExtraNames = append(template.ExtraNames, pkix.AttributeTypeAndValue{
-				Type:  []int{2, 5, 4, 41},
-				Value: pair[1],
-			})
-		} else if pair[0] == "E" { // email address
-			template.ExtraNames = append(template.ExtraNames, pkix.AttributeTypeAndValue{
-				Type:  []int{1, 2, 840, 113549, 1, 9, 1},
-				Value: pair[1],
-			})
-		} else {
-			value := []string{}
-			if pair[1] != "" {
-				value = append(value, pair[1])
+	if dn != NilString {
+		for _, element := range strings.Split(strings.Trim(dn, "/"), "/") {
+			pair := strings.Split(element, "=")
+			if len(pair) != 2 {
+				ErrorLog.Fatalf("Failed to parse distinguised name: malformed element %s in dn", element)
 			}
-			switch pair[0] {
-			case "C": // countryName
-				template.Country = value
-			case "L": // localityName
-				template.Locality = value
-			case "ST": // stateOrProvinceName
-				template.Province = value
-			case "O": // organizationName
-				template.Organization = value
-			case "OU": // organizationalUnitName
-				template.OrganizationalUnit = value
-			default:
-				if oid := KnownOIDs[pair[0]]; oid != nil {
-					template.ExtraNames = append(template.ExtraNames, pkix.AttributeTypeAndValue{
-						Type:  oid,
-						Value: pair[1],
-					})
-				} else if oid := ParseOID(pair[0]); oid != nil {
-					template.ExtraNames = append(template.ExtraNames, pkix.AttributeTypeAndValue{
-						Type:  oid,
-						Value: pair[1],
-					})
+			pair[0] = strings.ToUpper(strings.TrimSpace(pair[0]))
+			pair[1] = strings.TrimSpace(pair[1])
+			if pair[0] == "CN" {
+				template.CommonName = pair[1]
+			} else if pair[0] == "LN" { // local name
+				template.ExtraNames = append(template.ExtraNames, pkix.AttributeTypeAndValue{
+					Type:  []int{2, 5, 4, 41},
+					Value: pair[1],
+				})
+			} else if pair[0] == "E" { // email address
+				template.ExtraNames = append(template.ExtraNames, pkix.AttributeTypeAndValue{
+					Type:  []int{1, 2, 840, 113549, 1, 9, 1},
+					Value: pair[1],
+				})
+			} else {
+				value := []string{}
+				if pair[1] != "" {
+					value = append(value, pair[1])
 				}
-				ErrorLog.Fatalf("Failed to parse distinguised name: unknown element %s", element)
+				switch pair[0] {
+				case "C": // countryName
+					template.Country = value
+				case "L": // localityName
+					template.Locality = value
+				case "ST": // stateOrProvinceName
+					template.Province = value
+				case "O": // organizationName
+					template.Organization = value
+				case "OU": // organizationalUnitName
+					template.OrganizationalUnit = value
+				default:
+					if oid := KnownOIDs[pair[0]]; oid != nil {
+						template.ExtraNames = append(template.ExtraNames, pkix.AttributeTypeAndValue{
+							Type:  oid,
+							Value: pair[1],
+						})
+					} else if oid := ParseOID(pair[0]); oid != nil {
+						template.ExtraNames = append(template.ExtraNames, pkix.AttributeTypeAndValue{
+							Type:  oid,
+							Value: pair[1],
+						})
+					}
+					ErrorLog.Fatalf("Failed to parse distinguised name: unknown element %s", element)
+				}
 			}
 		}
 	}
@@ -342,10 +357,10 @@ func ParseEmailAddress(address string) (email *mail.Address) {
 }
 
 // Sign signs a certificate
-func (manifest *CertManifest) Sign() {
-	manifest.PublicKeyAlgorithm = x509.ECDSA
-	manifest.SignatureAlgorithm = x509.ECDSAWithSHA384
-	der, err := x509.CreateCertificate(rand.Reader, manifest.Certificate, manifest.CA.Certificate, manifest.PublicKey, manifest.CA.PrivateKey)
+func (manifest *CertFlags) Sign() {
+	manifest.SubjectCert.PublicKeyAlgorithm = x509.ECDSA
+	manifest.SubjectCert.SignatureAlgorithm = x509.ECDSAWithSHA384
+	der, err := x509.CreateCertificate(rand.Reader, manifest.SubjectCert, manifest.IssuingCert, manifest.SubjectKey.Public(), manifest.IssuingKey)
 	if err != nil {
 		ErrorLog.Fatalf("Failed to sign certificate: %s", err)
 	}
@@ -353,33 +368,33 @@ func (manifest *CertManifest) Sign() {
 	if err != nil {
 		ErrorLog.Fatalf("Failed to load signed certificate: %s", err)
 	}
-	manifest.Certificate = cert
+	manifest.SubjectCert = cert
 }
 
 // Save saves a certificate and associated key to a PKIWriter
-func (manifest *CertManifest) Save(dest PKIWriter) {
+func (manifest *CertFlags) Save(dest PKIWriter) {
 	baseName := filepath.Join(manifest.Path, filepath.Base(manifest.Path))
-	if manifest.PrivateKey != nil {
-		SaveKey(dest, manifest.PrivateKey, baseName+"-key.pem")
+	if manifest.SubjectKey != nil {
+		SaveKey(dest, manifest.SubjectKey, manifest.SubjectPass, baseName+"-key.pem")
 	}
-	SaveCert(dest, manifest, baseName+".pem")
+	SaveCert(dest, manifest.SubjectCert, baseName+".pem")
 }
 
 // SaveKey saves the private key
-func SaveKey(dest PKIWriter, key *PrivateKey, path string) {
+func SaveKey(dest PKIWriter, key *ecdsa.PrivateKey, pwd string, path string) {
 	DebugLog.Printf("Saving private key: %s\n", path)
-	dest.WriteData(key.MarshalKey(), path, os.FileMode(0600))
+	dest.WriteData(MarshalKey(key, pwd), path, os.FileMode(0600))
 }
 
 // SaveCert saves the certificate
-func SaveCert(dest PKIWriter, manifest *CertManifest, path string) {
+func SaveCert(dest PKIWriter, cert *x509.Certificate, path string) {
 	DebugLog.Printf("Saving certificate: %s\n", path)
-	dest.WriteData(MarshalCert(manifest.Certificate), path, os.FileMode(0644))
+	dest.WriteData(MarshalCert(cert), path, os.FileMode(0644))
 }
 
 // Save saves a certificate signing request and associated key to a PKIWwriter
-func (manifest *CSRManifest) Save(dest PKIWriter) {
-	SaveKey(dest, manifest.PrivateKey, filepath.Join(manifest.Path, "key.pem"))
+func (manifest *CSRFlags) Save(dest PKIWriter, pwd string) {
+	SaveKey(dest, manifest.Key, manifest.Password, filepath.Join(manifest.Path, "key.pem"))
 	SaveCSR(dest, manifest.CertificateRequest.Raw, filepath.Join(manifest.Path, "csr.pem"))
 }
 
@@ -399,21 +414,13 @@ func ReadCert(path string) *x509.Certificate {
 }
 
 // ReadKey reads a private key from a file
-func ReadKey(path string, pwd string) *PrivateKey {
+func ReadKey(path string, pwd string) *ecdsa.PrivateKey {
 	der, err := ioutil.ReadFile(path)
 	if err != nil {
 		ErrorLog.Fatalf("Failed to read private key file %s: %s", filepath.Join(Root, path), err)
 	}
 	return UnmarshalKey(der, pwd)
 }
-
-// func readCSR(path string) *x509.CertificateRequest {
-// 	der, err := ioutil.ReadFile(path)
-// 	if err != nil {
-// 		errorLog.Fatalf("Failed to read certificate signing request file %s: %s", filepath.Join(root, path), err)
-// 	}
-// 	return unMarshalCSR(&der)
-// }
 
 // MarshalCert converts a x509.Certificate to a der encoded byte array
 func MarshalCert(cert *x509.Certificate) []byte {
@@ -454,16 +461,16 @@ func UnmarshalCSR(der []byte) *x509.CertificateRequest {
 }
 
 // MarshalKey pem encodes a ecdsa.PrivateKey
-func (key *PrivateKey) MarshalKey() []byte {
-	der, err := x509.MarshalECPrivateKey(key.PrivateKey)
+func MarshalKey(key *ecdsa.PrivateKey, pwd string) []byte {
+	der, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
 		ErrorLog.Fatalf("Failed to marshal private key: %s", err)
 	}
-	if key.pwd == NilString {
+	if pwd == NilString {
 		data := pem.EncodeToMemory(&pem.Block{Type: KeyHeader, Bytes: der})
 		return data
 	}
-	block, err := x509.EncryptPEMBlock(rand.Reader, KeyHeader, der, []byte(key.pwd), x509.PEMCipherAES256)
+	block, err := x509.EncryptPEMBlock(rand.Reader, KeyHeader, der, []byte(pwd), x509.PEMCipherAES256)
 	if err != nil {
 		ErrorLog.Fatalf("Failed to encrypt private key: %s", err)
 	}
@@ -472,7 +479,7 @@ func (key *PrivateKey) MarshalKey() []byte {
 }
 
 // UnmarshalKey pem decodes a private key to an ecdsa.PrivateKey
-func UnmarshalKey(der []byte, pwd string) *PrivateKey {
+func UnmarshalKey(der []byte, pwd string) *ecdsa.PrivateKey {
 	var err error
 	var key *ecdsa.PrivateKey
 	block, _ := pem.Decode(der)
@@ -485,38 +492,15 @@ func UnmarshalKey(der []byte, pwd string) *PrivateKey {
 	if key, err = x509.ParseECPrivateKey(der); err != nil {
 		ErrorLog.Fatalf("Failed to parse private key: %s", err)
 	}
-	return &PrivateKey{PrivateKey: key, pwd: pwd}
+	return key
 }
 
 // DecryptPEM is a helper function to decrypt pem blocks
 func DecryptPEM(block *pem.Block, pwd string) ([]byte, error) {
 	if !x509.IsEncryptedPEMBlock(block) {
 		return block.Bytes, nil
-	} else if pwd == NilString {
-		return nil, errors.New("key is encrypted, but \"-pass-in=password\" flag not provided")
+	} else if pwd != NilString {
+		return nil, errors.New("key is encrypted, but password not provided")
 	}
 	return x509.DecryptPEMBlock(block, []byte(pwd))
-}
-
-// LoadCACert is a helper function for loading a certificate
-// from a file
-func (manifest *CertManifest) LoadCACert() {
-	if filepath.Dir(manifest.Path) != "." {
-		file := filepath.Dir(manifest.Path)
-		file = filepath.Join(file, filepath.Base(file))
-		manifest.CA = &CertManifest{
-			Path:        filepath.Dir(manifest.Path),
-			Certificate: ReadCert(file + ".pem"),
-		}
-	} else {
-		manifest.CA = manifest
-	}
-}
-
-// LoadCertChain is used to chain ca certs to a subject cert
-func (manifest *CertManifest) LoadCertChain() {
-	if filepath.Dir(manifest.Path) != "." {
-		manifest.LoadCACert()
-		manifest.CA.LoadCertChain()
-	}
 }

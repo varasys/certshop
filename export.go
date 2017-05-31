@@ -111,8 +111,7 @@ func ExportPEM(writer PKIWriter, flags ExportFlags) {
 	if flags.exportKey {
 		if _, err := os.Stat(filepath.Join(flags.path, name+"-key.pem")); err == nil {
 			key := ReadKey(filepath.Join(flags.path, name+"-key.pem"), flags.passIn)
-			key.pwd = flags.passOut
-			SaveKey(writer, key, filepath.Join(name, "key.pem"))
+			SaveKey(writer, key, flags.passOut, filepath.Join(name, "key.pem"))
 		}
 	}
 }

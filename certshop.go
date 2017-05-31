@@ -226,9 +226,9 @@ type CertFlags struct {
 	flag.FlagSet
 	SubjectCert *x509.Certificate
 	IssuingCert *x509.Certificate
-	Key         *ecdsa.PrivateKey
+	SubjectKey  *ecdsa.PrivateKey
+	IssuingKey  *ecdsa.PrivateKey
 	SubjectPass string
-	IssuerPass  string
 	Path        string
 }
 
@@ -236,8 +236,8 @@ type CertFlags struct {
 func ParseCertFlags(args []string, certType CertType) *CertFlags {
 	InfoLog.Println(`Parsing certificate flags`)
 	fs := CertFlags{FlagSet: *flag.NewFlagSet(`ca`, flag.ContinueOnError)}
-	fs.StringVar(&fs.SubjectPass, `subjectpass`, NilString, `password for the subject private key`)
-	fs.StringVar(&fs.IssuerPass, `issuerpass`, NilString, `password for the issuer private key`)
+	fs.StringVar(&fs.SubjectPass, `subject-pass`, NilString, `password for the subject private key`)
+	caPass := fs.String(`issuing-pass`, NilString, `password for the issuer private key`)
 	csr := fs.String(`csr`, NilString, `create certificate from certificate signing request (file path or leave blank to use stdin)`)
 	dn := fs.String(`dn`, NilString, `subject distunguished name`)
 	cn := fs.String(`cn`, NilString, `common name (overrides "CN=" from "-dn" flag)`)
@@ -260,14 +260,14 @@ func ParseCertFlags(args []string, certType CertType) *CertFlags {
 	if *csr != NilString && isSelfSigned {
 		ErrorLog.Fatal(`Cannot self sign a certificate made from a csr (since the private key is not available for signing)`)
 	}
-	fs.Key = GenerateKey()
+	fs.SubjectKey = GenerateKey()
 	fs.SubjectCert = &x509.Certificate{
 		KeyUsage:     certType.keyUsage,
 		ExtKeyUsage:  certType.extKeyUsage,
 		NotBefore:    RunTime,
 		NotAfter:     RunTime.Add(time.Duration(*validity*24) * time.Hour),
 		SerialNumber: GenerateSerial(),
-		PublicKey:    fs.Key.Public(),
+		PublicKey:    fs.SubjectKey.Public(),
 		IsCA:         isCA,
 		BasicConstraintsValid: isCA,
 		MaxPathLen:            *maxICA,
@@ -275,12 +275,15 @@ func ParseCertFlags(args []string, certType CertType) *CertFlags {
 	}
 	if isCA {
 		fs.SubjectCert.KeyUsage = fs.SubjectCert.KeyUsage | x509.KeyUsageCertSign
+		fs.SubjectCert.ExtKeyUsage = AppendExtKeyUsage(fs.SubjectCert.ExtKeyUsage, x509.ExtKeyUsageOCSPSigning)
 	}
 	if isSelfSigned {
 		fs.IssuingCert = fs.SubjectCert
+		fs.IssuingKey = fs.SubjectKey
 	} else {
 		caDir := filepath.Dir(fs.Path)
 		fs.IssuingCert = ReadCert(filepath.Join(caDir, filepath.Base(caDir)+`.pem`))
+		fs.IssuingKey = ReadKey(filepath.Join(caDir, filepath.Base(caDir)+`.pem`), *caPass)
 	}
 	if *inheritDN {
 		fs.SubjectCert.Subject = ParseDN(fs.IssuingCert.Subject, *dn, *cn)
@@ -310,10 +313,10 @@ type CertType struct {
 // signing request
 type CSRFlags struct {
 	flag.FlagSet
-	SubjectCSR  *x509.CertificateRequest
-	Key         *ecdsa.PrivateKey
-	SubjectPass string
-	Path        string
+	CertificateRequest *x509.CertificateRequest
+	Key                *ecdsa.PrivateKey
+	Password           string
+	Path               string
 }
 
 // ParseCSRFlags parses command line flags used to create a certificate signing
@@ -321,7 +324,7 @@ type CSRFlags struct {
 func ParseCSRFlags(args []string) *CSRFlags {
 	InfoLog.Println(`Parsing certificate request flags`)
 	fs := CSRFlags{FlagSet: *flag.NewFlagSet(`csr`, flag.ContinueOnError)}
-	fs.StringVar(&fs.SubjectPass, `subjectpass`, NilString, `password for the subject private key`)
+	fs.StringVar(&fs.Password, `subjectpass`, NilString, `password for the subject private key`)
 	dn := fs.String(`dn`, NilString, `subject distunguished name`)
 	cn := fs.String(`cn`, NilString, `common name (overrides "CN=" from "-dn" flag)`)
 	san := fs.String(`san`, NilString, `comma separated list of subject alternative names (ipv4, ipv6, dns or email)`)
@@ -336,13 +339,13 @@ func ParseCSRFlags(args []string) *CSRFlags {
 		ErrorLog.Fatalf(`Failed to parse certificate request path: %s`, strings.Join(fs.Args(), ` `))
 	}
 	fs.Key = GenerateKey()
-	fs.SubjectCSR = &x509.CertificateRequest{
+	fs.CertificateRequest = &x509.CertificateRequest{
 		Subject:   ParseDN(pkix.Name{}, *dn, *cn),
 		PublicKey: fs.Key.Public(),
 	}
 	sans := ParseSAN(*san, *cn, *local, *localhost)
-	fs.SubjectCSR.IPAddresses = sans.ip
-	fs.SubjectCSR.DNSNames = sans.dns
-	fs.SubjectCSR.EmailAddresses = sans.email
+	fs.CertificateRequest.IPAddresses = sans.ip
+	fs.CertificateRequest.DNSNames = sans.dns
+	fs.CertificateRequest.EmailAddresses = sans.email
 	return &fs
 }
