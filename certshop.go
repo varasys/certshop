@@ -22,14 +22,29 @@ var (
 	Version string
 	// Build is populated using `-ldflags -X `date +%FT%T%z`` build option
 	// build using the Makefile to inject this value
-	Build     string
-	InfoLog   = log.New(os.Stderr, ``, 0)
-	DebugLog  = log.New(ioutil.Discard, ``, 0)
-	ErrorLog  = log.New(os.Stderr, `Error: `, 0)
-	Root      string
+	Build string
+	// InfoLog logs informational messages to stderr
+	InfoLog = log.New(os.Stderr, ``, 0)
+	// DebugLog logs additional debugging information to stderr when the -debug
+	// flag is used
+	DebugLog = log.New(ioutil.Discard, ``, 0)
+	// ErrorLog logs error messages (which are typically fatal)
+	// The philosophy of this program is to fail fast on an error and not try
+	// to do any recovery (so the user knows something is wrong and can
+	// explicitely fix it)
+	ErrorLog = log.New(os.Stderr, `Error: `, 0)
+	// Root is the working directory (defaults to "./")
+	Root string
+	// Overwrite specifies not to abort if the output directory already exists
 	Overwrite bool
-	RunTime   time.Time
-	nilString = `\x00` // default for string flags (used to detect if user supplied value)
+	// RunTime stores the time the program started running (used to determine
+	// certificate NotBefore and NotAfter values)
+	RunTime time.Time
+	// NilString is a string used to determine whether user input to a flag
+	// was provided. This is done by setting the default flag value to
+	// NilString.
+	NilString = `\x00` // default for string flags (used to detect if user supplied value)
+	// CertTypes defines some default values for different certificate types
 	CertTypes = map[string]CertType{
 		`ca`: CertType{
 			command:         `ca`,
@@ -83,9 +98,9 @@ func main() {
 	}()
 	RunTime = time.Now().UTC()
 	fs := ParseGlobalFlags()
-	for fs.Command != nilString {
+	for fs.Command != NilString {
 		command := fs.Command
-		fs.Command = nilString
+		fs.Command = NilString
 		switch command {
 		case `ca`, `ica`, `server`, `client`, `peer`, `signature`:
 			manifest := ParseCertFlags(fs.Args, CertTypes[fs.Command])
@@ -96,15 +111,15 @@ func main() {
 		case `csr`:
 			manifest := ParseCSRFlags(fs.Args)
 			manifest.Path = "Delete this line"
-			writer := newTgzWriter(os.Stdout)
-			defer writer.close()
+			writer := NewTgzWriter(os.Stdout)
+			defer writer.Close()
 			// manifest.save(writer)
 			InfoLog.Printf(`Finished creating certificate signing request`)
 		case `version`:
 			InfoLog.Printf("certshop %s\nBuilt: %s\nCopyright (c) 2017 VARASYS Limited", Version, Build)
 			os.Exit(0)
 		case `export`:
-			exportCertificate(parseExportFlags(fs.Args))
+			ExportCertificate(ParseExportFlags(fs.Args))
 		case `describe`:
 			flags := parseDescribeFlags(fs.Args)
 			writer := newDescribeWriter(os.Stdout)
@@ -123,16 +138,19 @@ func main() {
 	}
 }
 
+// HashKeyID hashes a private key for use as a certificate Subject ID
 func HashKeyID(key *ecdsa.PublicKey) []byte {
 	hash := sha1.Sum(MarshalKeyBitString(key).RightAlign())
 	return hash[:]
 }
 
+// HashCertFingerprint calculates the sha-256 certificate fingerprint hash
 func HashCertFingerprint(cert *x509.Certificate) []byte {
 	hash := sha256.Sum256(cert.Raw)
 	return hash[:]
 }
 
+// MarshalKeyBitString extracts the asn1.BitString from the public key
 func MarshalKeyBitString(key *ecdsa.PublicKey) asn1.BitString {
 	der, err := x509.MarshalPKIXPublicKey(key)
 	if err != nil {
@@ -149,6 +167,7 @@ func MarshalKeyBitString(key *ecdsa.PublicKey) asn1.BitString {
 	return publicKeyInfo.PublicKey
 }
 
+// GlobalFlags holds the global command line flags
 type GlobalFlags struct {
 	flag.FlagSet
 	Root    string
@@ -157,6 +176,7 @@ type GlobalFlags struct {
 	Args    []string
 }
 
+// ParseGlobalFlags parses the global command line flags
 func ParseGlobalFlags() GlobalFlags {
 	InfoLog.Println(`Parsing global flags`)
 	fs := GlobalFlags{FlagSet: *flag.NewFlagSet(`main`, flag.ContinueOnError)}
@@ -182,6 +202,7 @@ func ParseGlobalFlags() GlobalFlags {
 	return fs
 }
 
+// SetDebug sets the debug logger output to stderr
 func SetDebug(debug bool) {
 	if debug {
 		DebugLog = log.New(os.Stderr, ``, log.Lshortfile)
@@ -189,6 +210,7 @@ func SetDebug(debug bool) {
 	}
 }
 
+// SetRootDir sets the applications working directory
 func SetRootDir(root string) {
 	DebugLog.Printf("Using root directory: %s", root)
 	if err := os.MkdirAll(root, os.FileMode(0755)); err != nil {
@@ -199,6 +221,7 @@ func SetRootDir(root string) {
 	}
 }
 
+// CertFlags holds information required to create and sign a certificate.
 type CertFlags struct {
 	flag.FlagSet
 	SubjectCert *x509.Certificate
@@ -209,15 +232,16 @@ type CertFlags struct {
 	Path        string
 }
 
+// ParseCertFlags parses command line flags used to create a certificate
 func ParseCertFlags(args []string, certType CertType) *CertFlags {
 	InfoLog.Println(`Parsing certificate flags`)
 	fs := CertFlags{FlagSet: *flag.NewFlagSet(`ca`, flag.ContinueOnError)}
-	fs.StringVar(&fs.SubjectPass, `subjectpass`, nilString, `password for the subject private key`)
-	fs.StringVar(&fs.IssuerPass, `issuerpass`, nilString, `password for the issuer private key`)
-	csr := fs.String(`csr`, nilString, `create certificate from certificate signing request (file path or leave blank to use stdin)`)
-	dn := fs.String(`dn`, nilString, `subject distunguished name`)
-	cn := fs.String(`cn`, nilString, `common name (overrides "CN=" from "-dn" flag)`)
-	san := fs.String(`san`, nilString, `comma separated list of subject alternative names (ipv4, ipv6, dns or email)`)
+	fs.StringVar(&fs.SubjectPass, `subjectpass`, NilString, `password for the subject private key`)
+	fs.StringVar(&fs.IssuerPass, `issuerpass`, NilString, `password for the issuer private key`)
+	csr := fs.String(`csr`, NilString, `create certificate from certificate signing request (file path or leave blank to use stdin)`)
+	dn := fs.String(`dn`, NilString, `subject distunguished name`)
+	cn := fs.String(`cn`, NilString, `common name (overrides "CN=" from "-dn" flag)`)
+	san := fs.String(`san`, NilString, `comma separated list of subject alternative names (ipv4, ipv6, dns or email)`)
 	maxICA := fs.Int(`maxICA`, 0, `maximum number of subordinate intermediate certificate authorities allowed`)
 	local := fs.Bool(`local`, certType.localSAN, `include "127.0.0.1", "::1", and "localhost" in subject alternative names`)
 	localhost := fs.Bool(`localhost`, false, `same as -local but also include local hostname subject alternative name`)
@@ -233,7 +257,7 @@ func ParseCertFlags(args []string, certType CertType) *CertFlags {
 	}
 	isSelfSigned := filepath.Dir(fs.Path) == `.`
 	isCA := isSelfSigned || certType.command == `ca` || certType.command == `ica`
-	if *csr != nilString && isSelfSigned {
+	if *csr != NilString && isSelfSigned {
 		ErrorLog.Fatal(`Cannot self sign a certificate made from a csr (since the private key is not available for signing)`)
 	}
 	fs.Key = GenerateKey()
@@ -273,6 +297,7 @@ func ParseCertFlags(args []string, certType CertType) *CertFlags {
 	return &fs
 }
 
+// CertType holds default properties for some pre-defined certificate types
 type CertType struct {
 	command         string
 	defaultValidity int
@@ -281,6 +306,8 @@ type CertType struct {
 	localSAN        bool
 }
 
+// CSRFlags holds information required to create and sign a certificate
+// signing request
 type CSRFlags struct {
 	flag.FlagSet
 	SubjectCSR  *x509.CertificateRequest
@@ -289,13 +316,15 @@ type CSRFlags struct {
 	Path        string
 }
 
+// ParseCSRFlags parses command line flags used to create a certificate signing
+// request
 func ParseCSRFlags(args []string) *CSRFlags {
 	InfoLog.Println(`Parsing certificate request flags`)
 	fs := CSRFlags{FlagSet: *flag.NewFlagSet(`csr`, flag.ContinueOnError)}
-	fs.StringVar(&fs.SubjectPass, `subjectpass`, nilString, `password for the subject private key`)
-	dn := fs.String(`dn`, nilString, `subject distunguished name`)
-	cn := fs.String(`cn`, nilString, `common name (overrides "CN=" from "-dn" flag)`)
-	san := fs.String(`san`, nilString, `comma separated list of subject alternative names (ipv4, ipv6, dns or email)`)
+	fs.StringVar(&fs.SubjectPass, `subjectpass`, NilString, `password for the subject private key`)
+	dn := fs.String(`dn`, NilString, `subject distunguished name`)
+	cn := fs.String(`cn`, NilString, `common name (overrides "CN=" from "-dn" flag)`)
+	san := fs.String(`san`, NilString, `comma separated list of subject alternative names (ipv4, ipv6, dns or email)`)
 	local := fs.Bool(`local`, false, `include "127.0.0.1", "::1", and "localhost" in subject alternative names`)
 	localhost := fs.Bool(`localhost`, false, `same as -local but also include local hostname subject alternative name`)
 	if err := fs.Parse(args[1:]); err != nil {

@@ -8,20 +8,24 @@ import (
 	"path/filepath"
 )
 
-type pkiWriter interface {
-	writeData(data []byte, path string, perms os.FileMode)
-	close()
+// PKIWriter is an interface for writing to either files or a .tgz archive
+type PKIWriter interface {
+	WriteData(data []byte, path string, perms os.FileMode)
+	Close()
 }
 
-type tgzWriter struct {
+// TGZWriter is an interface for writing to .tgz archive
+type TGZWriter struct {
 	gzWriter  *gzip.Writer
 	tarWriter *tar.Writer
 }
 
-type fileWriter struct {
+// FileWriter is an interface for writing to files
+type FileWriter struct {
 }
 
-func (writer *tgzWriter) close() {
+// Close closes the writer
+func (writer *TGZWriter) Close() {
 	if err := writer.tarWriter.Close(); err != nil {
 		ErrorLog.Fatalf("Failed to close tar writer: %s", err)
 	}
@@ -30,20 +34,24 @@ func (writer *tgzWriter) close() {
 	}
 }
 
-func (writer *fileWriter) close() {
+// Close closes the writer
+func (writer *FileWriter) Close() {
 	// needed to satisfy pkiWriter interface, but not used since files are closed as soon as data is written
 }
 
-func newTgzWriter(dest io.Writer) *tgzWriter {
+// NewTgzWriter creates a new TGZWriter outputting to dest
+func NewTgzWriter(dest io.Writer) *TGZWriter {
 	gzWriter := gzip.NewWriter(dest)
-	return &tgzWriter{gzWriter, tar.NewWriter(gzWriter)}
+	return &TGZWriter{gzWriter, tar.NewWriter(gzWriter)}
 }
 
-func newFileWriter() *fileWriter {
-	return &fileWriter{}
+// NewFileWriter ceates a new FileWriter outputting to the local filesystem
+func NewFileWriter() *FileWriter {
+	return &FileWriter{}
 }
 
-func (writer *tgzWriter) writeData(data []byte, path string, perms os.FileMode) {
+// WriteData writes a header and data block in the .tgz archive
+func (writer *TGZWriter) WriteData(data []byte, path string, perms os.FileMode) {
 	if err := writer.tarWriter.WriteHeader(&tar.Header{
 		Name:    path,
 		Mode:    int64(perms),
@@ -57,7 +65,8 @@ func (writer *tgzWriter) writeData(data []byte, path string, perms os.FileMode) 
 	}
 }
 
-func (writer *fileWriter) writeData(data []byte, path string, perms os.FileMode) {
+// WriteData writes data to the local filesystem
+func (writer *FileWriter) WriteData(data []byte, path string, perms os.FileMode) {
 	flags := os.O_WRONLY | os.O_CREATE
 	if !Overwrite {
 		flags = flags | os.O_EXCL

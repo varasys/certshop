@@ -19,31 +19,43 @@ import (
 )
 
 var (
+	// KeyHeader is the private key pem header
 	KeyHeader = `EC PRIVATE KEY`
-	CRTHeader = `CERTIFICATE`
+	// CertHeader is the certificate pem header
+	CertHeader = `CERTIFICATE`
+	// CSRHeader is the certificate signing request pem header
 	CSRHeader = `CERTIFICATE REQUEST`
 )
 
-type CRTManifest struct {
+// CertManifest holds information required to create a signed certificate
+type CertManifest struct {
 	Path string
-	CA   *CRTManifest
+	CA   *CertManifest
 	*x509.Certificate
 	*PrivateKey
 	PublicKey *ecdsa.PublicKey
 }
 
+// CSRManifest holds information required to create a certificate
+// signing request
 type CSRManifest struct {
 	Path string
 	*x509.CertificateRequest
 	*PrivateKey
 }
 
+// SANSet helds information about subject alternative names
 type SANSet struct {
 	ip    []net.IP
 	email []string
 	dns   []string
 }
 
+// ParseSAN parses a string listing the subject alternative names, along with
+// if cn != NilString the cn will be included as a DNS Name. If local is
+// true then "127.0.0.1,::1" will be included as ip addresses and "localhost"
+// will be included as a DNS name. If localhost is true then the local
+// hostname will alse be included as a DNS name.
 func ParseSAN(san string, cn string, local, localhost bool) *SANSet {
 	sanSet := &SANSet{[]net.IP{}, []string{}, []string{}}
 	if local || localhost {
@@ -57,12 +69,14 @@ func ParseSAN(san string, cn string, local, localhost bool) *SANSet {
 			sanSet.AppendDNS(host)
 		}
 	}
-	if cn != nilString {
+	if cn != NilString {
 		sanSet.AppendDNS(cn)
 	}
 	return sanSet
 }
 
+// AppendLocalSAN adds localhost entries to the san list excluding duplicate
+// entries.
 func (set *SANSet) AppendLocalSAN(hostname bool) {
 	set.AppendIP(`127.0.0.1`, `::1`)
 	set.AppendDNS(`localhost`)
@@ -75,6 +89,7 @@ func (set *SANSet) AppendLocalSAN(hostname bool) {
 	}
 }
 
+// AppendIP adds new IP addresses to the san list excluding duplicate entries.
 func (set *SANSet) AppendIP(vals ...interface{}) {
 OuterLoop:
 	for i := range vals {
@@ -98,6 +113,8 @@ OuterLoop:
 	}
 }
 
+// AppendEmail adds new email addresses to the san list excluding duplicate
+// entries.
 func (set *SANSet) AppendEmail(vals ...interface{}) {
 ValLoop:
 	for i := range vals {
@@ -120,6 +137,7 @@ ValLoop:
 	}
 }
 
+// AppendDNS adds new dns host names to the san list excluding duplicate entries.
 func (set *SANSet) AppendDNS(vals ...string) {
 OuterLoop:
 	for i := range vals {
@@ -133,36 +151,44 @@ OuterLoop:
 	}
 }
 
+// DistName holds the raw string format of the distinguished name
 type DistName struct {
 	string
 }
 
+// PrivateKey holds a private key and associated password
+// the password value is NilString if no password
 type PrivateKey struct {
 	*ecdsa.PrivateKey
 	pwd string
 }
 
+// Get implements Get() required by the flag.Value interface
 func (dn *DistName) Get() interface{} {
 	return dn.string
 }
 
+// String implements String() required by the flag.Value interface
 func (dn *DistName) String() string {
-	if dn.string != nilString {
+	if dn.string != NilString {
 		return dn.string
 	}
 	return ""
 }
 
+// Set implements Set() required by the flag.Value interface
 func (dn *DistName) Set(val string) error {
 	dn.string = val
 	return nil
 }
 
+// ReadCSR reads a .pem format certificate request and returns the .der
+// format bytes
 func ReadCSR(path string) []byte {
 	var csr []byte
 	var err error
 	switch path {
-	case nilString:
+	case NilString:
 		ErrorLog.Fatal("no csr source specified")
 	case "": // read from stdin
 		if csr, err = ioutil.ReadAll(os.Stdin); err != nil {
@@ -176,6 +202,7 @@ func ReadCSR(path string) []byte {
 	return csr
 }
 
+// AppendExtKeyUsage appends a ExtKeyUsage bit excluding duplicates
 func AppendExtKeyUsage(usages []x509.ExtKeyUsage, vals ...x509.ExtKeyUsage) {
 ValLoop:
 	for i := range vals {
@@ -188,6 +215,8 @@ ValLoop:
 	}
 }
 
+// GenerateSerial returns a big random number (presumed to be globally unique)
+// to be used as a certificate serial number
 func GenerateSerial() *big.Int {
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
@@ -196,6 +225,7 @@ func GenerateSerial() *big.Int {
 	return serial
 }
 
+// GenerateKey generates a new ecdsa-P384 private key
 func GenerateKey() *ecdsa.PrivateKey {
 	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	if err != nil {
@@ -204,6 +234,10 @@ func GenerateKey() *ecdsa.PrivateKey {
 	return key
 }
 
+// ParseDN parses the dn string and returns a pkix.Name. Default values are
+// copied from the template before parsing. If cn != NilString it ultimately
+// overides the final cn value (this is a convienence to allow users to
+// specify a cn without having to use the "/CN={}" format)
 func ParseDN(template pkix.Name, dn string, cn string) pkix.Name {
 	DebugLog.Printf("Parsing Distinguished Name: %s\n", dn)
 	template.CommonName = ""
@@ -258,17 +292,25 @@ func ParseDN(template pkix.Name, dn string, cn string) pkix.Name {
 			}
 		}
 	}
-	if cn != nilString {
+	if cn != NilString {
 		template.CommonName = cn
 	}
 	return template
 }
 
+// KnownOIDs is a map of known oids and associated strings to be used in the
+// -dn argument. Local name (2.5.4.41=emailAddress) is included specifically
+// so digital signature certificates can identify an individuals name written
+// in their local language (and the English version stored in the cn). Ideally
+// digital signature certificates should include
+// "/CN="English Name"/E="Email Addresss"/LN="Local Name" so this information
+// is clearly presented.
 var KnownOIDs = map[string][]int{
 	"LN": []int{2, 5, 4, 41},                //local name
 	"E":  []int{1, 2, 840, 113549, 1, 9, 1}, //email
 }
 
+// ParseOID converts a oid string (ie. "2.5.4.41") to an integer array
 func ParseOID(oidString string) (oid []int) {
 	elements := strings.Split(oidString, ".")
 	oid = make([]int, len(elements))
@@ -281,6 +323,9 @@ func ParseOID(oidString string) (oid []int) {
 	return oid
 }
 
+// ParseEmailAddress parses an email address and returns the address if
+// successful, otherwise nil. This can parse both normal emails ("me@here.com")
+// and also "Me Here <me@here.com>" format
 func ParseEmailAddress(address string) (email *mail.Address) {
 	// implemented as a seperate function because net.mail.ParseAddress
 	// panics instead of returning err on malformed addresses (appears to be a bug)
@@ -296,7 +341,8 @@ func ParseEmailAddress(address string) (email *mail.Address) {
 	return
 }
 
-func (manifest *CRTManifest) sign() {
+// Sign signs a certificate
+func (manifest *CertManifest) Sign() {
 	manifest.PublicKeyAlgorithm = x509.ECDSA
 	manifest.SignatureAlgorithm = x509.ECDSAWithSHA384
 	der, err := x509.CreateCertificate(rand.Reader, manifest.Certificate, manifest.CA.Certificate, manifest.PublicKey, manifest.CA.PrivateKey)
@@ -310,7 +356,8 @@ func (manifest *CRTManifest) sign() {
 	manifest.Certificate = cert
 }
 
-func (manifest *CRTManifest) Save(dest pkiWriter) {
+// Save saves a certificate and associated key to a PKIWriter
+func (manifest *CertManifest) Save(dest PKIWriter) {
 	baseName := filepath.Join(manifest.Path, filepath.Base(manifest.Path))
 	if manifest.PrivateKey != nil {
 		SaveKey(dest, manifest.PrivateKey, baseName+"-key.pem")
@@ -318,26 +365,31 @@ func (manifest *CRTManifest) Save(dest pkiWriter) {
 	SaveCert(dest, manifest, baseName+".pem")
 }
 
-func SaveKey(dest pkiWriter, key *PrivateKey, path string) {
+// SaveKey saves the private key
+func SaveKey(dest PKIWriter, key *PrivateKey, path string) {
 	DebugLog.Printf("Saving private key: %s\n", path)
-	dest.writeData(key.MarshalKey(), path, os.FileMode(0600))
+	dest.WriteData(key.MarshalKey(), path, os.FileMode(0600))
 }
 
-func SaveCert(dest pkiWriter, manifest *CRTManifest, path string) {
+// SaveCert saves the certificate
+func SaveCert(dest PKIWriter, manifest *CertManifest, path string) {
 	DebugLog.Printf("Saving certificate: %s\n", path)
-	dest.writeData(MarshalCert(manifest.Certificate), path, os.FileMode(0644))
+	dest.WriteData(MarshalCert(manifest.Certificate), path, os.FileMode(0644))
 }
 
-func (manifest *CSRManifest) Save(dest pkiWriter) {
+// Save saves a certificate signing request and associated key to a PKIWwriter
+func (manifest *CSRManifest) Save(dest PKIWriter) {
 	SaveKey(dest, manifest.PrivateKey, filepath.Join(manifest.Path, "key.pem"))
 	SaveCSR(dest, manifest.CertificateRequest.Raw, filepath.Join(manifest.Path, "csr.pem"))
 }
 
-func SaveCSR(dest pkiWriter, der []byte, path string) {
+// SaveCSR saves
+func SaveCSR(dest PKIWriter, der []byte, path string) {
 	DebugLog.Printf("Saving certificate signing request: %s\n", path)
-	dest.writeData(MarshalCSR(der), path, os.FileMode(0644))
+	dest.WriteData(MarshalCSR(der), path, os.FileMode(0644))
 }
 
+// ReadCert reads a certificate from a file
 func ReadCert(path string) *x509.Certificate {
 	der, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -346,6 +398,7 @@ func ReadCert(path string) *x509.Certificate {
 	return UnmarshalCert(der)
 }
 
+// ReadKey reads a private key from a file
 func ReadKey(path string, pwd string) *PrivateKey {
 	der, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -362,14 +415,16 @@ func ReadKey(path string, pwd string) *PrivateKey {
 // 	return unMarshalCSR(&der)
 // }
 
+// MarshalCert converts a x509.Certificate to a der encoded byte array
 func MarshalCert(cert *x509.Certificate) []byte {
-	data := pem.EncodeToMemory(&pem.Block{Type: CRTHeader, Bytes: cert.Raw})
+	data := pem.EncodeToMemory(&pem.Block{Type: CertHeader, Bytes: cert.Raw})
 	return data
 }
 
+// UnmarshalCert cenverts a der encoded byte array to a x509.Certificate
 func UnmarshalCert(der []byte) *x509.Certificate {
 	block, _ := pem.Decode(der)
-	if block == nil || block.Type != CRTHeader {
+	if block == nil || block.Type != CertHeader {
 		ErrorLog.Fatal("Failed to decode certificate")
 	}
 	crt, err := x509.ParseCertificate(block.Bytes)
@@ -379,11 +434,13 @@ func UnmarshalCert(der []byte) *x509.Certificate {
 	return crt
 }
 
+// MarshalCSR converts a der encoded csr to a .pem format
 func MarshalCSR(csr []byte) []byte {
 	data := pem.EncodeToMemory(&pem.Block{Type: CSRHeader, Bytes: csr})
 	return data
 }
 
+// UnmarshalCSR converts a der encoded csr to x509.CertificateRequest
 func UnmarshalCSR(der []byte) *x509.CertificateRequest {
 	block, _ := pem.Decode(der)
 	if block == nil || block.Type != CSRHeader {
@@ -396,12 +453,13 @@ func UnmarshalCSR(der []byte) *x509.CertificateRequest {
 	return csr
 }
 
+// MarshalKey pem encodes a ecdsa.PrivateKey
 func (key *PrivateKey) MarshalKey() []byte {
 	der, err := x509.MarshalECPrivateKey(key.PrivateKey)
 	if err != nil {
 		ErrorLog.Fatalf("Failed to marshal private key: %s", err)
 	}
-	if key.pwd == nilString {
+	if key.pwd == NilString {
 		data := pem.EncodeToMemory(&pem.Block{Type: KeyHeader, Bytes: der})
 		return data
 	}
@@ -413,6 +471,7 @@ func (key *PrivateKey) MarshalKey() []byte {
 	return data
 }
 
+// UnmarshalKey pem decodes a private key to an ecdsa.PrivateKey
 func UnmarshalKey(der []byte, pwd string) *PrivateKey {
 	var err error
 	var key *ecdsa.PrivateKey
@@ -429,20 +488,23 @@ func UnmarshalKey(der []byte, pwd string) *PrivateKey {
 	return &PrivateKey{PrivateKey: key, pwd: pwd}
 }
 
+// DecryptPEM is a helper function to decrypt pem blocks
 func DecryptPEM(block *pem.Block, pwd string) ([]byte, error) {
 	if !x509.IsEncryptedPEMBlock(block) {
 		return block.Bytes, nil
-	} else if pwd == nilString {
+	} else if pwd == NilString {
 		return nil, errors.New("key is encrypted, but \"-pass-in=password\" flag not provided")
 	}
 	return x509.DecryptPEMBlock(block, []byte(pwd))
 }
 
-func (manifest *CRTManifest) LoadCACert() {
+// LoadCACert is a helper function for loading a certificate
+// from a file
+func (manifest *CertManifest) LoadCACert() {
 	if filepath.Dir(manifest.Path) != "." {
 		file := filepath.Dir(manifest.Path)
 		file = filepath.Join(file, filepath.Base(file))
-		manifest.CA = &CRTManifest{
+		manifest.CA = &CertManifest{
 			Path:        filepath.Dir(manifest.Path),
 			Certificate: ReadCert(file + ".pem"),
 		}
@@ -451,7 +513,8 @@ func (manifest *CRTManifest) LoadCACert() {
 	}
 }
 
-func (manifest *CRTManifest) LoadCertChain() {
+// LoadCertChain is used to chain ca certs to a subject cert
+func (manifest *CertManifest) LoadCertChain() {
 	if filepath.Dir(manifest.Path) != "." {
 		manifest.LoadCACert()
 		manifest.CA.LoadCertChain()
