@@ -3,9 +3,13 @@ package main
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/md5"
 	"crypto/rand"
+	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/pem"
 	"errors"
 	"io/ioutil"
@@ -336,7 +340,7 @@ func ParseEmailAddress(address string) (email *mail.Address) {
 func (manifest *CertFlags) Sign() {
 	manifest.SubjectCert.PublicKeyAlgorithm = x509.ECDSA
 	manifest.SubjectCert.SignatureAlgorithm = x509.ECDSAWithSHA384
-	der, err := x509.CreateCertificate(rand.Reader, manifest.SubjectCert, manifest.IssuingCert, manifest.SubjectKey.Public(), manifest.IssuingKey)
+	der, err := x509.CreateCertificate(rand.Reader, manifest.SubjectCert, manifest.IssuingCert, manifest.SubjectCert.PublicKey, manifest.IssuingKey)
 	if err != nil {
 		ErrorLog.Fatalf("Failed to sign certificate: %s", err)
 	}
@@ -488,8 +492,79 @@ func UnmarshalKey(der []byte, pwd string) *ecdsa.PrivateKey {
 func DecryptPEM(block *pem.Block, pwd string) ([]byte, error) {
 	if !x509.IsEncryptedPEMBlock(block) {
 		return block.Bytes, nil
-	} else if pwd != NilString {
+	} else if pwd == NilString {
 		return nil, errors.New("key is encrypted, but password not provided")
 	}
 	return x509.DecryptPEMBlock(block, []byte(pwd))
+}
+
+// HashKeyID hashes an ecdsa.PublicKey for use as a certificate Subject ID
+func HashKeyID(key *ecdsa.PublicKey) []byte {
+	hash := sha1.Sum(MarshalKeyBitString(key).RightAlign())
+	return hash[:]
+}
+
+// HashSHA256Fingerprint returns a sha-256 hash of a *x509.Certificate or
+// *x509.CertificateRequest
+func HashSHA256Fingerprint(entity interface{}) []byte {
+	switch entity.(type) {
+	case *x509.Certificate:
+		hash := sha256.Sum256(entity.(*x509.Certificate).Raw)
+		return hash[:]
+	case *x509.CertificateRequest:
+		hash := sha256.Sum256(entity.(*x509.CertificateRequest).Raw)
+		return hash[:]
+	default:
+		ErrorLog.Fatalf(`Failed to hash fingerprint: unknown type`)
+		return nil
+	}
+}
+
+// HashSHA1Fingerprint returns a sha-1 hash of a *x509.Certificate or
+// *x509.CertificateRequest
+func HashSHA1Fingerprint(entity interface{}) []byte {
+	switch entity.(type) {
+	case *x509.Certificate:
+		hash := sha1.Sum(entity.(*x509.Certificate).Raw)
+		return hash[:]
+	case *x509.CertificateRequest:
+		hash := sha1.Sum(entity.(*x509.CertificateRequest).Raw)
+		return hash[:]
+	default:
+		ErrorLog.Fatalf(`Failed to hash fingerprint: unknown type`)
+		return nil
+	}
+}
+
+// HashMD5Fingerprint returns a md5 hash of a *x509.Certificate or
+// *x509.CertificateRequest
+func HashMD5Fingerprint(entity interface{}) []byte {
+	switch entity.(type) {
+	case *x509.Certificate:
+		hash := md5.Sum(entity.(*x509.Certificate).Raw)
+		return hash[:]
+	case *x509.CertificateRequest:
+		hash := md5.Sum(entity.(*x509.CertificateRequest).Raw)
+		return hash[:]
+	default:
+		ErrorLog.Fatalf(`Failed to hash fingerprint: unknown type`)
+		return nil
+	}
+}
+
+// MarshalKeyBitString extracts the asn1.BitString from the public key
+func MarshalKeyBitString(key *ecdsa.PublicKey) asn1.BitString {
+	der, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil {
+		ErrorLog.Fatalf(`Failed to marshal public key`)
+	}
+	var publicKeyInfo struct {
+		Algorithm pkix.AlgorithmIdentifier
+		PublicKey asn1.BitString
+	}
+	_, err = asn1.Unmarshal(der, &publicKeyInfo)
+	if err != nil {
+		ErrorLog.Fatalf(`Failed to unmarshal public key asn.1 bitstring`)
+	}
+	return publicKeyInfo.PublicKey
 }

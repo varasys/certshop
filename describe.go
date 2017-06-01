@@ -55,16 +55,21 @@ var (
 	}
 )
 
-type describeFlags struct {
+// DescribeFlags structure holds command line flags for the describe command
+type DescribeFlags struct {
 	flag.FlagSet
-	paths []string
-	key   bool
-	crt   bool
-	csr   bool
+	paths    []string
+	key      bool
+	crt      bool
+	csr      bool
+	password string
 }
 
-func parseDescribeFlags(args []string) *describeFlags {
-	fs := describeFlags{FlagSet: *flag.NewFlagSet("describe", flag.ExitOnError)}
+// ParseDescribeFlags parses command line options to the describe command
+// into a DescribeFlags struct
+func ParseDescribeFlags(args []string) *DescribeFlags {
+	fs := DescribeFlags{FlagSet: *flag.NewFlagSet("describe", flag.ExitOnError)}
+	fs.StringVar(&fs.password, `password`, NilString, "private key password")
 	fs.BoolVar(&fs.key, "key", false, "display private keys")
 	fs.BoolVar(&fs.crt, "crt", false, "display certificates")
 	fs.BoolVar(&fs.csr, "csr", false, "display certificate signing requests")
@@ -80,14 +85,16 @@ func parseDescribeFlags(args []string) *describeFlags {
 	return &fs
 }
 
-func (writer *describeWriter) describe(flags *describeFlags) {
+// Describe outputs a description based on DescribeFlags parsed from the
+// command line
+func (writer *DescribeWriter) Describe(flags *DescribeFlags) {
 	if len(flags.paths) == 0 {
 		data, err := ioutil.ReadAll(os.Stdin)
 		if err != nil {
 			ErrorLog.Fatalf("Failed to read from stdin: %s", err)
 		}
-		writer.sprintf("\nDescribing from stdin\n")
-		writer.processDER(data, flags.key, flags.crt, flags.csr)
+		writer.Sprintf("\nDescribing from stdin\n")
+		writer.ProcessDER(data, flags)
 	} else {
 		for i := range flags.paths {
 			err := filepath.Walk(filepath.Join(Root, flags.paths[i]),
@@ -95,71 +102,91 @@ func (writer *describeWriter) describe(flags *describeFlags) {
 					if err != nil {
 						return err
 					} else if info.IsDir() {
-						writer.sprintf("\nDescribing directory: %s", path)
+						writer.Sprintf("\nDescribing directory: %s", path)
 					} else {
-						writer.sprintf("\nDescribing file: %s", path)
+						writer.Sprintf("\nDescribing file: %s", path)
 						if data, err := ioutil.ReadFile(path); err != nil {
 							return fmt.Errorf("failed to read file %s: %s", path, err)
 						} else {
-							writer.processDER(data, flags.key, flags.crt, flags.csr)
+							writer.ProcessDER(data, flags)
 						}
 					}
 					return nil
 				})
 			if err != nil {
-				writer.sprintf("Error walking directory tree: %s\n", err)
+				writer.Sprintf("Error walking directory tree: %s\n", err)
 			}
 		}
 	}
-	writer.sprintf("\n")
+	writer.Sprintf("\n")
 }
 
-func (writer *describeWriter) processDER(der []byte, key, crt, csr bool) {
+// ProcessDER describes a der format certificate, certificate request, or
+// private key
+func (writer *DescribeWriter) ProcessDER(der []byte, flags *DescribeFlags) {
 	for block, rest := pem.Decode(der); block != nil; block, rest = pem.Decode(rest) {
 		switch block.Type {
 		case "CERTIFICATE":
-			if crt {
-				if err := describeBlock(writer, block, x509.ParseCertificate); err != nil {
+			if flags.crt {
+				if err := DescribeBlock(writer, block, x509.ParseCertificate); err != nil {
 					ErrorLog.Printf("Failed to parse certificate: %s\n", err)
 				}
 			}
 		case "EC PRIVATE KEY":
-			if key {
-				if err := describeBlock(writer, block, x509.ParseECPrivateKey); err != nil {
-					ErrorLog.Printf("Failed to parse key: %s\n", err)
+			if flags.key {
+				if flags.password != NilString {
+					if der, err := x509.DecryptPEMBlock(block, []byte(flags.password)); err != nil {
+						ErrorLog.Printf("Failed to decrypt private key: %s\n", err)
+					} else {
+						if key, err := x509.ParseECPrivateKey(der); err != nil {
+							ErrorLog.Printf("Failed to parse private key: %s\n", err)
+						} else {
+							Describe(writer, key)
+						}
+					}
+				} else {
+					if err := DescribeBlock(writer, block, x509.ParseECPrivateKey); err != nil {
+						ErrorLog.Printf("Failed to parse private key: %s\n", err)
+					}
 				}
 			}
 		case "CERTIFICATE REQUEST":
-			if csr {
-				if err := describeBlock(writer, block, x509.ParseCertificateRequest); err != nil {
+			if flags.csr {
+				if err := DescribeBlock(writer, block, x509.ParseCertificateRequest); err != nil {
 					ErrorLog.Printf("Failed to parse csr: %s\n", err)
 				}
 			}
 		default:
-			writer.sprintf("Failed to parse file\n")
+			writer.Sprintf("Failed to parse file\n")
 		}
 	}
 }
 
-func describeBlock(writer *describeWriter, block *pem.Block, parser interface{}) error {
+// DescribeBlock describes a pem format block
+func DescribeBlock(writer *DescribeWriter, block *pem.Block, parser interface{}) error {
 	in := []reflect.Value{reflect.ValueOf(block.Bytes)}
 	out := reflect.ValueOf(parser).Call(in)
 	if out[1].Interface() != nil {
 		return out[1].Interface().(error)
 	}
-	describe(writer, out[0].Interface())
+	Describe(writer, out[0].Interface())
 	return nil
 }
 
-type describeWriter struct {
+// DescribeWriter is a wrapper around a bufio.Writer. Use NewDescribeWriter to
+// set the output from the bufio.Writer
+type DescribeWriter struct {
 	bufio.Writer
 }
 
-func newDescribeWriter(writers ...io.Writer) describeWriter {
-	return describeWriter{*bufio.NewWriter(io.MultiWriter(writers...))}
+// NewDescribeWriter returns a DescribeWriter outputting to the set
+// set of writers (typically stderr, stdout, or both)
+func NewDescribeWriter(writers ...io.Writer) *DescribeWriter {
+	return &DescribeWriter{*bufio.NewWriter(io.MultiWriter(writers...))}
 }
 
-func (writer *describeWriter) sprintf(format string, a ...interface{}) {
+// Sprintf is a utility helper to print formatted strings to the writer
+func (writer *DescribeWriter) Sprintf(format string, a ...interface{}) {
 	if _, err := writer.WriteString(fmt.Sprintf(format, a...)); err != nil {
 		ErrorLog.Fatalf("Failed to write to output: %s", err)
 	}
@@ -167,43 +194,42 @@ func (writer *describeWriter) sprintf(format string, a ...interface{}) {
 
 var (
 	certificateTemplate = `
-  Issuing Certificate Authority Information:
-    {{template "subject" .Issuer}}
-    Key ID:              {{encodeHexString .AuthorityKeyId}}
-
   Subject Certificate Information:
-    x.509 Version:       {{.Version}}
-    Is CA:               {{.IsCA}}{{if .IsCA}} (Max Path Length = {{.MaxPathLen}}){{end}}
     {{template "subject" .Subject}}
     DNS Names:           {{join .DNSNames ", "}}
-    Email Addresses:     {{join .EmailAddresses ", "}}
     IP Addresses:        {{joinIP .IPAddresses    ", "}}
-    Key Algorithm:       {{keyAlgorithm .PublicKey}}
-    Key ID:              {{encodeHexString .SubjectKeyId}}
-    Serial Number:       {{encodeHexString .SerialNumber.Bytes}}
-    SHA256 Fingerprint:  {{hashCertFingerprint .}}
-    Signature Algorithm: {{.SignatureAlgorithm.String}}
+    Email Addresses:     {{join .EmailAddresses ", "}}
+    x.509 Version:       {{.Version}}
+    Is CA:               {{.IsCA}}{{if .IsCA}} (Max Path Length = {{.MaxPathLen}}){{end}}
     Not Before:          {{localTime .NotBefore}}
     Not After:           {{localTime .NotAfter}}
     Key Usage:           {{formatKeyUsage .KeyUsage}}
     Extended Key Usage:  {{formatExtKeyUsage .ExtKeyUsage}}
+    Key Algorithm:       {{keyAlgorithm .PublicKey}}
+    Key ID:              {{encodeHexString .SubjectKeyId}}
+    Signature Algorithm: {{.SignatureAlgorithm.String}}
+    Serial Number:       {{encodeHexString .SerialNumber.Bytes}}
+    SHA256 Fingerprint:  {{hashSHA256Fingerprint .}}
+    SHA1 Fingerprint:    {{hashSHA1Fingerprint .}}
+    MD5 Fingerprint:     {{hashMD5Fingerprint .}}
+
+  Issuing Certificate Authority Information:
+    {{template "subject" .Issuer}}
+    Key ID:              {{encodeHexString .AuthorityKeyId}}
 `
 
 	csrTemplate = `
   Certificate Signing Request Information:
-    x.509 Version:       {{.Version}}
     {{template "subject" .Subject}}
     DNS Names:           {{join .DNSNames ", "}}
-    Email Addresses:     {{join .EmailAddresses ", "}}
     IP Addresses:        {{joinIP .IPAddresses    ", "}}
+    Email Addresses:     {{join .EmailAddresses ", "}}
     Key Algorithm:       {{keyAlgorithm .PublicKey}}
-    Key ID:              {{encodeHexString .SubjectKeyId}}
-    SHA256 Fingerprint:  {{hashCertFingerprint .}}
+    Key ID:              {{hashKeyID .PublicKey}}
     Signature Algorithm: {{.SignatureAlgorithm.String}}
-    Not Before:          {{localTime .NotBefore}}
-    Not After:           {{localTime .NotAfter}}
-    Key Usage:           {{formatKeyUsage .KeyUsage}}
-    Extended Key Usage:  {{formatExtKeyUsage .ExtKeyUsage}}
+    SHA256 Fingerprint:  {{hashSHA256Fingerprint .}}
+    SHA1 Fingerprint:    {{hashSHA1Fingerprint .}}
+    MD5 Fingerprint:     {{hashMD5Fingerprint .}}
 `
 
 	subjectTemplate = `Common Name:         {{.CommonName}}{{if .Organization}}
@@ -225,9 +251,9 @@ var (
 //  Issuing URLs:         {{join .IssuingCertificateURL ", "}}
 //  CRL Dist. Points:     {{join .CRLDistributionPoints ", "}}
 
-// describe will accept either a *x509.Certificate, *x509.CertificateRequest
+// Describe will accept either a *x509.Certificate, *x509.CertificateRequest
 // or *ecdsa.PrivateKey
-func describe(writer *describeWriter, entity interface{}) {
+func Describe(writer *DescribeWriter, entity interface{}) {
 	tmpl := template.New("main").Funcs(templateFunctions)
 	switch entity.(type) {
 	case *x509.Certificate:
@@ -241,6 +267,9 @@ func describe(writer *describeWriter, entity interface{}) {
 	}
 	if err := tmpl.Execute(writer, entity); err != nil {
 		ErrorLog.Printf("Error describing item: %s", err)
+	}
+	if err := writer.Flush(); err != nil {
+		ErrorLog.Printf("Error flushing describe output: %s", err)
 	}
 }
 
@@ -262,8 +291,12 @@ var templateFunctions = template.FuncMap{
 	"publicKeyAlgorithms": func(val x509.PublicKeyAlgorithm) string {
 		return publicKeyAlgorithms[val]
 	},
-	"hashCertFingerprint": func(cert *x509.Certificate) string {
-		return fmt.Sprintf("% X", HashCertFingerprint(cert))
+	"hashSHA256Fingerprint": func(entity interface{}) string {
+		return fmt.Sprintf("% X", HashSHA256Fingerprint(entity))
+	}, "hashSHA1Fingerprint": func(entity interface{}) string {
+		return fmt.Sprintf("% X", HashSHA1Fingerprint(entity))
+	}, "hashMD5Fingerprint": func(entity interface{}) string {
+		return fmt.Sprintf("% X", HashMD5Fingerprint(entity))
 	},
 	"hashKeyID": func(key *ecdsa.PublicKey) string {
 		return fmt.Sprintf("% X", HashKeyID(key))
