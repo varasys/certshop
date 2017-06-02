@@ -10,6 +10,16 @@ import (
 	"strings"
 )
 
+func init() {
+	Commands[`export`] = &Command{
+		Description: `export keys and certificates in .pem or .p12 format`,
+		HelpString:  `TODO`,
+		Function: func(fs *GlobalFlags) {
+			ExportCertificate(ParseExportFlags(fs.Args))
+		},
+	}
+}
+
 // ExportFlags struct holds information required by the "export" command
 type ExportFlags struct {
 	flag.FlagSet
@@ -23,7 +33,7 @@ type ExportFlags struct {
 }
 
 // ParseExportFlags parses the command line flags for the "export" command
-func ParseExportFlags(args []string) ExportFlags {
+func ParseExportFlags(args []string) *ExportFlags {
 	fs := ExportFlags{FlagSet: *flag.NewFlagSet("export", flag.ContinueOnError)}
 	fs.BoolVar(&fs.exportCrt, "export-crt", false, "export certificate")
 	fs.BoolVar(&fs.exportKey, "export-key", false, "export certificate")
@@ -32,8 +42,9 @@ func ParseExportFlags(args []string) ExportFlags {
 	fs.StringVar(&fs.passIn, "pass-in", NilString, "existing private key password (only required if -exportFormat=\"p12\" and the key is encrypted)")
 	fs.StringVar(&fs.passOut, "pass-out", NilString, "pasword for exported private key (only required if -exportFormat=\"p12\")")
 	exportAll := fs.String("export-all", NilString, "shortcut for \"-export-crt -export-key -export-ca={path}\" where -export-ca={path} is only include if a path is provided")
-	if err := fs.Parse(args); err != nil {
-		ErrorLog.Fatalf("Failed to parse command line options: %s", err)
+	if err := fs.Parse(args[1:]); err != nil {
+		fs.PrintDefaults()
+		ErrorLog.Fatalf("Failed to parse export command line options: %s", strings.Join(args[1:], " "))
 	}
 	switch len(fs.Args()) {
 	case 1:
@@ -48,7 +59,7 @@ func ParseExportFlags(args []string) ExportFlags {
 			fs.exportCA = *exportAll
 		}
 	}
-	return fs
+	return &fs
 }
 
 // FindFile accepts a path which is either a directory or file. If it is a
@@ -74,9 +85,9 @@ func FindFile(path string, suffix string) (string, error) {
 
 // ExportCertificate exports certificate with key and optionally a ca certificate
 // to a .tgz archive
-func ExportCertificate(flags ExportFlags) {
+func ExportCertificate(flags *ExportFlags) {
 	InfoLog.Printf("Exporting %s\n", flags.path)
-	if flags.exportCA != "" {
+	if flags.exportCA != NilString {
 		if path, err := FindFile(flags.exportCA, ".pem"); err != nil {
 			ErrorLog.Fatalf("Failed to find ca certificate: %s", err)
 		} else {
@@ -95,7 +106,7 @@ func ExportCertificate(flags ExportFlags) {
 }
 
 // ExportPEM exports in .pem format
-func ExportPEM(writer PKIWriter, flags ExportFlags) {
+func ExportPEM(writer PKIWriter, flags *ExportFlags) {
 	name := filepath.Base(flags.path)
 	if flags.exportCA != "" {
 		writer.WriteData(MarshalCert(ReadCert(flags.exportCA)), filepath.Join(name, "ca.pem"), os.FileMode(0644))
@@ -117,7 +128,7 @@ func ExportPEM(writer PKIWriter, flags ExportFlags) {
 }
 
 // ExportP12 exports in .p12 format
-func ExportP12(writer PKIWriter, flags ExportFlags) {
+func ExportP12(writer PKIWriter, flags *ExportFlags) {
 	InfoLog.Print("Running openssl to create p12 file")
 	name := filepath.Base(flags.path)
 	args := []string{

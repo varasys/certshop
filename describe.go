@@ -19,6 +19,21 @@ import (
 	"time"
 )
 
+func init() {
+	Commands[`describe`] = &Command{
+		Description: `output private key, certificate and certificate request information`,
+		HelpString:  `TODO`,
+		Function: func(fs *GlobalFlags) {
+			flags := ParseDescribeFlags(fs.Args)
+			writer := NewDescribeWriter(os.Stdout)
+			writer.Describe(flags)
+			if err := writer.Flush(); err != nil {
+				ErrorLog.Fatalf("Failed to flush output: %s", err)
+			}
+		},
+	}
+}
+
 var (
 	publicKeyAlgorithms = map[x509.PublicKeyAlgorithm]string{
 		x509.UnknownPublicKeyAlgorithm: "Unknown",
@@ -74,7 +89,8 @@ func ParseDescribeFlags(args []string) *DescribeFlags {
 	fs.BoolVar(&fs.crt, "crt", false, "display certificates")
 	fs.BoolVar(&fs.csr, "csr", false, "display certificate signing requests")
 	if err := fs.Parse(args[1:]); err != nil {
-		ErrorLog.Fatalf("Failed to parse command line options: %s", err)
+		fs.PrintDefaults()
+		ErrorLog.Fatalf("Failed to parse command line options: %s", strings.Join(args[1:], " "))
 	}
 	fs.paths = fs.Args()
 	if !fs.key && !fs.crt && !fs.csr {

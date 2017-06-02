@@ -24,6 +24,28 @@ type TGZWriter struct {
 type FileWriter struct {
 }
 
+// StdoutWriter is an interface for writing to stdout
+type StdoutWriter struct {
+}
+
+// NewStdoutWriter creater and return a new StdoutWriter
+func NewStdoutWriter() *StdoutWriter {
+	return &StdoutWriter{}
+}
+
+// WriteData writes data to stdout
+// the path and perms arguments are ignored
+func (writer *StdoutWriter) WriteData(data []byte, path string, perms os.FileMode) {
+	if _, err := os.Stdout.Write(data); err != nil {
+		ErrorLog.Fatalf("Failed to write to stdout: %s", err)
+	}
+}
+
+// Close flushes output to stdout
+func (writer *StdoutWriter) Close() {
+	os.Stdout.Sync()
+}
+
 // Close closes the writer
 func (writer *TGZWriter) Close() {
 	if err := writer.tarWriter.Close(); err != nil {

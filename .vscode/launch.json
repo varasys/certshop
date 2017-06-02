@@ -71,7 +71,7 @@
             "host": "127.0.0.1",
             "program": "${fileDirname}",
             "env": {},
-            "args": ["export", "-format=p12", "-passOut=1234", "ca/ica1/ica2/server"],
+            "args": ["export", "-export-ca=vpn_server/vpn_server.pem"],
             "showLog": true
         },
         {
