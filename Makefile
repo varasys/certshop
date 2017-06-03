@@ -1,5 +1,7 @@
 #!/usr/bin/make -f
 
+# based on https://gist.github.com/subfuzion/0bd969d08fe0d8b5cc4b23c795854a13
+
 SHELL := /bin/sh
 
 TARGET := $(shell echo $${PWD\#\#*/})
@@ -7,9 +9,10 @@ TARGET := $(shell echo $${PWD\#\#*/})
 
 VERSION := `git describe --tags`
 BUILD := `date +%FT%T%z`
-LICENSE := "'"`cat LICENSE`"'"
+LICENSE := `cat LICENSE`
+export LICENSE
 
-LDFLAGS=-ldflags "-X main.Version=${VERSION} -X main.Build=${BUILD}"
+LDFLAGS=-ldflags "-X main.Version=${VERSION} -X main.Build=${BUILD} -X main.License=$$LICENSE"
 
 SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 
