@@ -65,16 +65,18 @@ func ParseSANString(san string) *SANSet {
 // AppendLocalSAN adds localhost entries to the san list excluding duplicate
 // entries. If hostname is true the os.Hostname() function is called and the
 // result also added as a DNS entry.
-func (sans *SANSet) AppendLocalSAN(hostname bool) {
+func (sans *SANSet) AppendLocalSAN(sanString string) {
 	sans.AppendIP(`127.0.0.1`, `::1`)
 	sans.AppendDNS(`localhost`)
-	if hostname {
-		if host, err := os.Hostname(); err != nil {
-			ErrorLog.Fatalf("failed to append localhost to sans: %s", err)
-		} else {
-			sans.AppendDNS(host)
-		}
+	if host, err := os.Hostname(); err != nil {
+		ErrorLog.Fatalf("Failed to query local hostname from os: %s", err)
+	} else {
+		sans.AppendDNS(host)
 	}
+	newSans := ParseSANString(sanString)
+	sans.AppendIP(newSans.ip)
+	sans.AppendDNS(newSans.dns...)
+	sans.AppendEmail(newSans.email)
 }
 
 // AppendIP adds new IP addresses to the san list excluding duplicate entries.

@@ -51,8 +51,7 @@ func ParseCSRFlags(global *GlobalFlags) *CSRFlags {
 	dn := fs.String(`dn`, NilString, `subject distunguished name`)
 	cn := fs.String(`cn`, NilString, `common name (overrides "CN=" from "-dn" flag)`)
 	san := fs.String(`san`, NilString, `comma separated list of subject alternative names (ipv4, ipv6, dns or email)`)
-	local := fs.Bool(`local`, false, `include "127.0.0.1", "::1", and "localhost" in subject alternative names`)
-	localhost := fs.Bool(`localhost`, false, `same as -local but also include local hostname subject alternative name`)
+	localhost := fs.String(`localhost`, NilString, `include "127.0.0.1,::1,localhost" and hostname (as reported by the os) and "cn" and any additional sans provided as an argument to -localhost`)
 	help := fs.Bool(`help`, false, `show help message and exit`)
 	if err := fs.Parse(global.Args[1:]); err != nil || *help {
 		var buf bytes.Buffer
@@ -77,8 +76,9 @@ func ParseCSRFlags(global *GlobalFlags) *CSRFlags {
 		PublicKey: fs.Key.Public(),
 	}
 	sans := *ParseSANString(*san)
-	if *local || *localhost {
+	if *localhost != NilString {
 		sans.AppendLocalSAN(*localhost)
+		sans.AppendDNS(fs.CertificateRequest.Subject.CommonName)
 	}
 	fs.CertificateRequest.IPAddresses = sans.ip
 	fs.CertificateRequest.DNSNames = sans.dns

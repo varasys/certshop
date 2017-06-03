@@ -3,8 +3,8 @@
 go build .
 rm -rf test
 mkdir test
-
-APP="./certshop -root=test"
+cd test
+alias certshop=../certshop
 
 # General notes
 #
@@ -73,13 +73,31 @@ APP="./certshop -root=test"
 
 
 echo 'create self signed server'
-$APP server bare_server
+certshop server bare_server
 
-echo 'self signed server with sans="127.0.0.1,::1,localhost"'
-$APP server -local local_server
+echo 'create self signed server with sans="127.0.0.1,::1,localhost,hostname"'
+certshop server -localhost= local_server
 
-echo 'self signed server with sans="127.0.0.1,::1,localhost,${HOSTNAME}"'
-$APP server -localhost localhost_server
+echo 'create a self signed server with \n
+sans="127.0.0.1,::1,localhost,hostname,server.acme.com" and \n
+common name "server.acme.com" where hostname will be determined from a os call \n
+---> this is probably the most common usage'
+certshop server -localhost= -cn=server.acme.com acme_server
+
+echo 'create a self signed server with \n
+sans="127.0.0.1,::1,localhost,hostname,server.acme.com,192.168.1.1,server" and \n
+common name "server.acme.com" where hostname will be determined from a os call'
+certshop server -localhost=192.168.1.1,server -cn=server.acme.com acme_server
+
+echo 'create a self signed certificate authority which can only sign end user certificates'
+certshop ca -cn="My CA" acme_ca
+
+echo 'create a self signed certificate authority with distinguished name and which can only \n
+sign end user certificates (note -overwrite to overwrite the files created in the example above)'
+certshop -overwrite ca -dn="/CN=My CA/O=ACME Co./OU=IT" acme_ca
+
+
+
 
 echo 'self signed server with distinguished name and subject alternative names'
 $APP server -localhost -dn="/CN=server.acme.com/O=ACME Co./OU=IT" -san="192.168.1.45,server2.acme.com" acme_server
@@ -123,6 +141,12 @@ $APP csr -cn="ACME VPN Client 2" client_csr
 
 echo 'create a new vpn client using the csr created above and signed by the openvpn server certificate created above'
 $APP client -csr=client_csr/client_csr-csr.pem vpn_server/vpn_client2
+
+echo 'create csr with localhost and server.acme.org cn'
+$APP csr -cn=server.acme.org -localhost= acme acme_csr
+
+echo 'create csr with localhost and public ip'
+$APP csr -cn=server.acme.org -localhost=10.3.21.1 acme_csr2
 
 
 

@@ -12,12 +12,15 @@ import (
 )
 
 var (
-	// Version is populated using `-ldflags -X `git describe --tags`` build option
+	// Version is populated using "-ldflags -X `git describe --tags`" build option
 	// build using the Makefile to inject this value
 	Version string
-	// Build is populated using `-ldflags -X `date +%FT%T%z`` build option
+	// Build is populated using "-ldflags -X `date +%FT%T%z`" build option
 	// build using the Makefile to inject this value
 	Build string
+	// License is populated using "-ldflags -X `cat LICENSE`" build option
+	// build using the Makefile to inject this value
+	License string
 	// InfoLog logs informational messages to stderr
 	InfoLog = log.New(os.Stderr, ``, 0)
 	// DebugLog logs additional debugging information to stderr when the -debug
@@ -55,7 +58,16 @@ func init() {
 }
 
 func main() {
-	fs := ParseGlobalFlags()
+	if len(os.Args) == 1 { // interactive mode
+		RunInteractive()
+	} else { // scripted mode
+		RunScripted(os.Args[1:])
+	}
+}
+
+// RunScripted runs with args
+func RunScripted(args []string) {
+	fs := ParseGlobalFlags(args)
 	if fs.Command != nil {
 		fs.Command.Function(fs)
 	} else {
@@ -116,15 +128,15 @@ type GlobalFlags struct {
 }
 
 // ParseGlobalFlags parses the global command line flags
-func ParseGlobalFlags() *GlobalFlags {
+func ParseGlobalFlags(args []string) *GlobalFlags {
 	DebugLog.Println(`Parsing global flags`)
 	fs := GlobalFlags{FlagSet: *flag.NewFlagSet(`certshop`, flag.ContinueOnError)}
 	fs.StringVar(&fs.Root, `root`, `./`, `certificate tree root directory`)
 	fs.BoolVar(&Overwrite, `overwrite`, false, `don't abort if output directory already exists`)
 	fs.BoolVar(&fs.Debug, `debug`, false, `output extra debugging information`)
-	if err := fs.Parse(os.Args[1:]); err != nil {
+	if err := fs.Parse(args); err != nil {
 		printGlobalHelp(os.Stderr, &fs)
-		ErrorLog.Fatalf(`Failed to parse global flags: %s`, strings.Join(os.Args[1:], ` `))
+		ErrorLog.Fatalf(`Failed to parse global flags: %s`, strings.Join(args, ` `))
 	}
 	if fs.Debug {
 		DebugLog = log.New(os.Stderr, ``, log.Lshortfile)

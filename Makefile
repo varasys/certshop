@@ -1,27 +1,47 @@
 #!/usr/bin/make -f
 
-SHELL=/bin/sh
+SHELL := /bin/sh
 
-BINARY=certshop
+TARGET := $(shell echo $${PWD\#\#*/})
+.DEFAULT_GOAL: $(TARGET)
 
-# These are the values we want to pass for VERSION and BUILD
-# git tag 1.0.1
-# git commit -am "One more change after the tags"
-VERSION=`git describe --tags`
-BUILD=`date +%FT%T%z`
+VERSION := `git describe --tags`
+BUILD := `date +%FT%T%z`
+LICENSE := "'"`cat LICENSE`"'"
 
 LDFLAGS=-ldflags "-X main.Version=${VERSION} -X main.Build=${BUILD}"
 
-build: *.go
-	go build ${LDFLAGS} -o ${BINARY}
+SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 
-test: build
-	./test.sh
+.PHONY: all build clean install uninstall fmt simplify check run
 
-install:
-	go install ${LDFLAGS}
+all: check install
+
+$(TARGET): $(SRC)
+	@go build $(LDFLAGS) -o $(TARGET)
+
+build: $(TARGET)
+	@true
 
 clean:
-	if [ -f ${BINARY} ] ; then rm ${BINARY} ; fi
+	@rm -f $(TARGET)
 
-.PHONY: clean install
+install:
+	@go install $(LDFLAGS)
+
+uninstall: clean
+	@rm -f $$(which ${TARGET})
+
+fmt:
+	@gofmt -l -w $(SRC)
+
+simplify:
+	@gofmt -s -l -w $(SRC)
+
+check:
+	@test -z $(shell gofmt -l main.go | tee /dev/stderr) || echo "[WARN] Fix formatting issues with 'make fmt'"
+	@for d in $$(go list ./... | grep -v /vendor/); do golint $${d}; done
+	@go tool vet ${SRC}
+
+run: install
+	@$(TARGET)

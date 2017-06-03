@@ -137,8 +137,7 @@ func ParseCertFlags(global *GlobalFlags, certType *CertType) *CertFlags {
 	cn := fs.String(`cn`, NilString, `common name (overrides "CN=" from "-dn" flag)`)
 	san := fs.String(`san`, NilString, `comma separated list of subject alternative names (ipv4, ipv6, dns or email)`)
 	maxICA := fs.Int(`maxICA`, 0, `maximum number of subordinate intermediate certificate authorities allowed`)
-	local := fs.Bool(`local`, certType.localSAN, `include "127.0.0.1", "::1", and "localhost" in subject alternative names`)
-	localhost := fs.Bool(`localhost`, false, `same as -local but also include local hostname subject alternative name`)
+	localhost := fs.String(`localhost`, NilString, `include "127.0.0.1,::1,localhost" and hostname (as reported by the os) and "cn" and any additional sans provided as an argument to -localhost`)
 	inheritDN := fs.Bool(`inherit-dn`, true, `inherit distinguished name from issuing certificate before applying "-dn" argument`)
 	validity := fs.Int(`validity`, certType.defaultValidity, `validity of the certificate in days`)
 	help := fs.Bool(`help`, false, `show help message and exit`)
@@ -204,7 +203,7 @@ func ParseCertFlags(global *GlobalFlags, certType *CertType) *CertFlags {
 		fs.IssuingKey = ReadKey(filepath.Join(caDir, filepath.Base(caDir)+`-key.pem`), *caPass)
 	}
 	fs.SubjectCert.AuthorityKeyId = fs.IssuingCert.SubjectKeyId
-	if *csr != NilString {
+	if *csr == NilString {
 		if *inheritDN {
 			fs.SubjectCert.Subject = ParseDN(fs.IssuingCert.Subject, *dn, *cn)
 		} else {
@@ -223,8 +222,9 @@ func ParseCertFlags(global *GlobalFlags, certType *CertType) *CertFlags {
 	if *san != NilString {
 		sans = *ParseSANString(*san)
 	}
-	if *local || *localhost {
+	if *localhost != NilString {
 		sans.AppendLocalSAN(*localhost)
+		sans.AppendDNS(fs.SubjectCert.Subject.CommonName)
 	}
 	fs.SubjectCert.IPAddresses = sans.ip
 	fs.SubjectCert.DNSNames = sans.dns
