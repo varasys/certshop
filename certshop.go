@@ -43,7 +43,8 @@ var (
 	// NilString.
 	NilString = `\x00` // default for string flags (used to detect if user supplied value)
 	// Commands is a map from the string name of a command to meta information required to execute the command
-	Commands = map[string]*Command{}
+	Commands        = map[string]*Command{}
+	flagHelpStrings = map[string]string{}
 )
 
 func init() {
@@ -52,22 +53,14 @@ func init() {
 		Description: `display certshop version and build date and exit`,
 		Function: func(fs *GlobalFlags) {
 			InfoLog.Printf("certshop %s\nBuilt: %s\nCopyright (c) 2017 VARASYS Limited", Version, Build)
+			InfoLog.Print(License)
 			os.Exit(0)
 		},
 	}
 }
 
 func main() {
-	if len(os.Args) == 1 { // interactive mode
-		RunInteractive()
-	} else { // scripted mode
-		RunScripted(os.Args[1:])
-	}
-}
-
-// RunScripted runs with args
-func RunScripted(args []string) {
-	fs := ParseGlobalFlags(args)
+	fs := ParseGlobalFlags(os.Args[1:])
 	if fs.Command != nil {
 		fs.Command.Function(fs)
 	} else {

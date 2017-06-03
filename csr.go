@@ -48,7 +48,7 @@ func ParseCSRFlags(global *GlobalFlags) *CSRFlags {
 	fs := CSRFlags{FlagSet: *flag.NewFlagSet(`csr`, flag.ContinueOnError)}
 	fs.StringVar(&fs.Password, `subjectpass`, NilString, `password for the subject private key`)
 	fs.BoolVar(&fs.Describe, `describe`, true, `output description of created key and certificate request`)
-	dn := fs.String(`dn`, NilString, `subject distunguished name`)
+	dn := fs.String(`dn`, NilString, dnHelpString)
 	cn := fs.String(`cn`, NilString, `common name (overrides "CN=" from "-dn" flag)`)
 	san := fs.String(`san`, NilString, `comma separated list of subject alternative names (ipv4, ipv6, dns or email)`)
 	localhost := fs.String(`localhost`, NilString, `include "127.0.0.1,::1,localhost" and hostname (as reported by the os) and "cn" and any additional sans provided as an argument to -localhost`)

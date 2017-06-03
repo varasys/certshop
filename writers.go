@@ -91,7 +91,7 @@ func (writer *TGZWriter) WriteData(data []byte, path string, perms os.FileMode) 
 
 // WriteData writes data to the local filesystem
 func (writer *FileWriter) WriteData(data []byte, path string, perms os.FileMode) {
-	flags := os.O_WRONLY | os.O_CREATE
+	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 	if !Overwrite {
 		flags = flags | os.O_EXCL
 		if _, err := os.Stat(path); err == nil {

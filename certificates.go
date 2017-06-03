@@ -133,7 +133,7 @@ func ParseCertFlags(global *GlobalFlags, certType *CertType) *CertFlags {
 	fs.BoolVar(&fs.Describe, `describe`, true, `output description of created key and certificate`)
 	caPass := fs.String(`issuing-pass`, NilString, `the issuing private key password`)
 	csr := fs.String(`csr`, NilString, `create certificate from certificate signing request (file path or leave blank to use stdin)`)
-	dn := fs.String(`dn`, NilString, `subject distunguished name`)
+	dn := fs.String(`dn`, NilString, dnHelpString)
 	cn := fs.String(`cn`, NilString, `common name (overrides "CN=" from "-dn" flag)`)
 	san := fs.String(`san`, NilString, `comma separated list of subject alternative names (ipv4, ipv6, dns or email)`)
 	maxICA := fs.Int(`maxICA`, 0, `maximum number of subordinate intermediate certificate authorities allowed`)
@@ -245,4 +245,36 @@ func CreateCertificate(global *GlobalFlags, certType *CertType) *CertFlags {
 		Describe(writer, manifest.SubjectCert)
 	}
 	return manifest
+}
+
+var dnHelpString = `distinguished name as a foreslash delineated set of key
+    	value pairs where the key is in the list below or in oid dot notation:
+    	(ie. -dn="/CN=server.acme.com/O=ACME Co/OU=IT/C=US/2.5.4.41=你好")
+    	    CN:  Common Name (-cn is a shortcut for defining this)
+    	    O:   Organization
+    	    OU:  Organizational Unit
+    	    C:   Country
+    	    L:   Locality
+    	    ST:  State or Province
+    	    E:   Email Address (emailAddress oid = 1.2.840.113549.1.9.1)
+    	    LN:  Local Name (oid = 2.5.4.41)`
+
+// fs.StringVar(&fs.SubjectPass, `subject-pass`, NilString, `password for the subject private key`)
+// 	fs.BoolVar(&fs.Describe, `describe`, true, `output description of created key and certificate`)
+// 	caPass := fs.String(`issuing-pass`, NilString, `the issuing private key password`)
+// 	csr := fs.String(`csr`, NilString, `create certificate from certificate signing request (file path or leave blank to use stdin)`)
+// 	dn := fs.String(`dn`, NilString, dnHelpString)
+// 	cn := fs.String(`cn`, NilString, `common name (overrides "CN=" from "-dn" flag)`)
+// 	san := fs.String(`san`, NilString, `comma separated list of subject alternative names (ipv4, ipv6, dns or email)`)
+// 	maxICA := fs.Int(`maxICA`, 0, `maximum number of subordinate intermediate certificate authorities allowed`)
+// 	localhost := fs.String(`localhost`, NilString, `include "127.0.0.1,::1,localhost" and hostname (as reported by the os) and "cn" and any additional sans provided as an argument to -localhost`)
+// 	inheritDN := fs.Bool(`inherit-dn`, true, `inherit distinguished name from issuing certificate before applying "-dn" argument`)
+// 	validity := fs.Int(`validity`, certType.defaultValidity, `validity of the certificate in days`)
+// 	help := fs.Bool(`help`, false, `show he
+
+var helpStrings = map[string]string{
+	`subject-pass`: `
+	`,
+	`describe`: `
+	`,
 }

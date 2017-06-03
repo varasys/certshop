@@ -8,11 +8,11 @@ TARGET := $(shell echo $${PWD\#\#*/})
 .DEFAULT_GOAL: $(TARGET)
 
 VERSION := `git describe --tags`
-BUILD := `date +%FT%T%z`
+BUILD := `date -u +%FT%T%z`
 LICENSE := `cat LICENSE`
 export LICENSE
 
-LDFLAGS=-ldflags "-X main.Version=${VERSION} -X main.Build=${BUILD} -X main.License=$$LICENSE"
+LDFLAGS=-ldflags "-X main.Version=${VERSION} -X main.Build=${BUILD}"
 
 SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 

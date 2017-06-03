@@ -17,8 +17,9 @@ func init() {
 func printGlobalHelp(writer io.Writer, fs *GlobalFlags) {
 	templateString := `
 certshop is a command line program for managing public key infrastructure
-using ECP384 certificates with ECP384-SHA384 signatures and using AES256
-encryption for private keys.
+using using x.509 certificates with ECP384 private keys, ECP384-SHA384
+signatures, and AES256 encryption for private keys. All of these algorithms
+are currently considered strong and widely considered as general best practice.
 
 In other words, it makes x509 certificates for things like:
   certificate authorities
@@ -30,9 +31,16 @@ In other words, it makes x509 certificates for things like:
   encryption and authentication of any TLS stream
 
 certshop is a complete replacement for openssl for the tasks listed above,
-and is very streamlined to accomplish these tasks. ECP386 private keys,
-ECDSA-SHA384 signatures and AES256 private key encryption were chosen because
-they are currently generally considered best practices.
+and is very streamlined to accomplish these tasks reliable and repetatively.
+
+Although originally intended as a command line tool to streamline provisioning
+of secure kubernetes clusters, an interactive user interface was added to aid
+users with quickly understanding the functionality and operation.
+
+If the program is run with no arguments (or only global flags) it will enter
+interactive mode which allows operation through a series of menus. If the
+session is ended with the Exit command an option is provided to save a script
+that would replicate the session (with new private keys).
 
 Usage:
   certshop [global flags] command [command flags] path

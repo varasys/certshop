@@ -305,15 +305,15 @@ func ParseEmailAddress(address string) (email *mail.Address) {
 
 // Sign signs a certificate
 func (manifest *CertFlags) Sign() {
-	manifest.SubjectCert.PublicKeyAlgorithm = x509.ECDSA
-	manifest.SubjectCert.SignatureAlgorithm = x509.ECDSAWithSHA384
+	// manifest.SubjectCert.PublicKeyAlgorithm = x509.ECDSA
+	// manifest.SubjectCert.SignatureAlgorithm = x509.ECDSAWithSHA384
 	der, err := x509.CreateCertificate(rand.Reader, manifest.SubjectCert, manifest.IssuingCert, manifest.SubjectCert.PublicKey, manifest.IssuingKey)
 	if err != nil {
 		ErrorLog.Fatalf("Failed to sign certificate: %s", err)
 	}
 	cert, err := x509.ParseCertificate(der)
 	if err != nil {
-		ErrorLog.Fatalf("Failed to load signed certificate: %s", err)
+		ErrorLog.Fatalf("Failed to parse signed certificate: %s", err)
 	}
 	manifest.SubjectCert = cert
 }
@@ -326,7 +326,7 @@ func (manifest *CSRFlags) Sign() {
 	}
 	csr, err := x509.ParseCertificateRequest(der)
 	if err != nil {
-		ErrorLog.Fatalf("Failed to load signed certificate request: %s", err)
+		ErrorLog.Fatalf("Failed to parse signed certificate request: %s", err)
 	}
 	manifest.CertificateRequest = csr
 }
