@@ -45,7 +45,7 @@
             "host": "127.0.0.1",
             "program": "${fileDirname}",
             "env": {},
-            "args": ["-root=play", "-debug", "-overwrite", "server", "-csr=csr/csr.pem", "-san=192.168.1.1", "ca/ica/server"],
+            "args": ["-root=test", "-debug", "-overwrite", "server", "-san=192.168.1.1", "tossme"],
             "showLog": true
         },
         {

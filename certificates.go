@@ -174,6 +174,7 @@ func ParseCertFlags(global *GlobalFlags, certType *CertType) *CertFlags {
 		MaxPathLen:            *maxICA,
 		MaxPathLenZero:        *maxICA == 0,
 	}
+	sans := SANSet{}
 	if *csr == NilString {
 		fs.SubjectKey = GenerateKey()
 		fs.SubjectCert.PublicKey = fs.SubjectKey.Public()
@@ -184,9 +185,9 @@ func ParseCertFlags(global *GlobalFlags, certType *CertType) *CertFlags {
 			fs.SubjectCert.Subject = request.Subject
 		}
 		if *san == NilString {
-			fs.SubjectCert.DNSNames = request.DNSNames
-			fs.SubjectCert.IPAddresses = request.IPAddresses
-			fs.SubjectCert.EmailAddresses = request.EmailAddresses
+			sans.ip = request.IPAddresses
+			sans.dns = request.DNSNames
+			sans.email = request.EmailAddresses
 		}
 	}
 	fs.SubjectCert.SubjectKeyId = HashKeyID(fs.SubjectCert.PublicKey.(*ecdsa.PublicKey))
@@ -220,14 +221,14 @@ func ParseCertFlags(global *GlobalFlags, certType *CertType) *CertFlags {
 		fs.SubjectCert.Subject.CommonName = filepath.Base(fs.Path)
 	}
 	if *san != NilString {
-		sans := ParseSAN(*san, *cn, *local, *localhost)
-		// as per RFC 6125, published in '2011 "the validator must check SAN
-		// first, and if SAN exists, then CN should not be checked" (so it is
-		// good practice to duplicate the CN into the SAN list)
-		fs.SubjectCert.DNSNames = append(fs.SubjectCert.DNSNames, sans.dns...)
-		fs.SubjectCert.IPAddresses = append(fs.SubjectCert.IPAddresses, sans.ip...)
-		fs.SubjectCert.EmailAddresses = append(fs.SubjectCert.EmailAddresses, sans.email...)
+		sans = *ParseSANString(*san)
 	}
+	if *local || *localhost {
+		sans.AppendLocalSAN(*localhost)
+	}
+	fs.SubjectCert.IPAddresses = sans.ip
+	fs.SubjectCert.DNSNames = sans.dns
+	fs.SubjectCert.EmailAddresses = sans.email
 	return &fs
 }
 

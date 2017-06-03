@@ -43,7 +43,9 @@ func (writer *StdoutWriter) WriteData(data []byte, path string, perms os.FileMod
 
 // Close flushes output to stdout
 func (writer *StdoutWriter) Close() {
-	os.Stdout.Sync()
+	if err := os.Stdout.Sync(); err != nil {
+		ErrorLog.Printf("Failed to sync output: %s", err)
+	}
 }
 
 // Close closes the writer

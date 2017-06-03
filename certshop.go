@@ -93,8 +93,12 @@ command line flags:
 `); err2 != nil {
 		ErrorLog.Fatalf("Failed to parse help template: %s", err2)
 	} else {
-		_ = tmpl.Execute(writer, command)
-		_ = writer.Sync()
+		if err3 := tmpl.Execute(writer, command); err != nil {
+			ErrorLog.Fatalf("Failed to execute help template: %s", err3)
+		}
+		if err3 := writer.Sync(); err != nil {
+			ErrorLog.Fatalf("Failed to flush output: %s", err3)
+		}
 	}
 	if err != nil {
 		os.Exit(1)

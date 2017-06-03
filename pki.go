@@ -38,46 +38,47 @@ type SANSet struct {
 	dns   []string
 }
 
-// ParseSAN parses a string listing the subject alternative names, along with
-// if cn != NilString the cn will be included as a DNS Name. If local is
-// true then "127.0.0.1,::1" will be included as ip addresses and "localhost"
-// will be included as a DNS name. If localhost is true then the local
-// hostname will alse be included as a DNS name.
-func ParseSAN(san string, cn string, local, localhost bool) *SANSet {
-	sanSet := &SANSet{[]net.IP{}, []string{}, []string{}}
-	if local || localhost {
-		sanSet.AppendIP(`127.0.0.1`, `::1`)
-		sanSet.AppendDNS(`localhost`)
+// ParseSANString parses a string into a *SANSet
+func ParseSANString(san string) *SANSet {
+	DebugLog.Printf("Parsing Subject Alternative Names: %s\n", san)
+	result := SANSet{
+		ip:    []net.IP{},
+		dns:   []string{},
+		email: []string{},
 	}
-	if localhost {
-		if host, err := os.Hostname(); err != nil {
-			ErrorLog.Fatalf("Failed to get local hostname: %s", err)
-		} else {
-			sanSet.AppendDNS(host)
+	if san != NilString {
+		for _, h := range strings.Split(san, ",") {
+			h = strings.TrimSpace(h)
+			DebugLog.Printf("Parsing %s\n", h)
+			if ip := net.ParseIP(h); ip != nil {
+				result.AppendIP(ip)
+			} else if email := ParseEmailAddress(h); email != nil {
+				result.AppendEmail(email)
+			} else {
+				result.AppendDNS(h)
+			}
 		}
 	}
-	if cn != NilString {
-		sanSet.AppendDNS(cn)
-	}
-	return sanSet
+	return &result
 }
 
 // AppendLocalSAN adds localhost entries to the san list excluding duplicate
-// entries.
-func (set *SANSet) AppendLocalSAN(hostname bool) {
-	set.AppendIP(`127.0.0.1`, `::1`)
-	set.AppendDNS(`localhost`)
+// entries. If hostname is true the os.Hostname() function is called and the
+// result also added as a DNS entry.
+func (sans *SANSet) AppendLocalSAN(hostname bool) {
+	sans.AppendIP(`127.0.0.1`, `::1`)
+	sans.AppendDNS(`localhost`)
 	if hostname {
 		if host, err := os.Hostname(); err != nil {
 			ErrorLog.Fatalf("failed to append localhost to sans: %s", err)
 		} else {
-			set.AppendDNS(host)
+			sans.AppendDNS(host)
 		}
 	}
 }
 
 // AppendIP adds new IP addresses to the san list excluding duplicate entries.
-func (set *SANSet) AppendIP(vals ...interface{}) {
+func (sans *SANSet) AppendIP(vals ...interface{}) {
 OuterLoop:
 	for i := range vals {
 		var ip net.IP
@@ -87,22 +88,22 @@ OuterLoop:
 				ErrorLog.Fatalf("Failed to parse ip address: %s", vals[i])
 			}
 		case net.IP:
-			// do nothing
+			ip = vals[i].(net.IP)
 		default:
 			ErrorLog.Fatalf("Failed to parse ip address: %s", vals[i])
 		}
-		for j := range set.ip {
-			if set.ip[j].Equal(ip) {
+		for j := range sans.ip {
+			if sans.ip[j].Equal(ip) {
 				continue OuterLoop
 			}
 		}
-		set.ip = append(set.ip, ip)
+		sans.ip = append(sans.ip, ip)
 	}
 }
 
 // AppendEmail adds new email addresses to the san list excluding duplicate
 // entries.
-func (set *SANSet) AppendEmail(vals ...interface{}) {
+func (sans *SANSet) AppendEmail(vals ...interface{}) {
 ValLoop:
 	for i := range vals {
 		var address *mail.Address
@@ -115,26 +116,26 @@ ValLoop:
 		default:
 			ErrorLog.Fatalf("Failed to parse email: %s", vals[i])
 		}
-		for j := range set.email {
-			if set.email[j] == address.String() {
+		for j := range sans.email {
+			if sans.email[j] == address.String() {
 				continue ValLoop
 			}
 		}
-		set.email = append(set.email, address.String())
+		sans.email = append(sans.email, address.String())
 	}
 }
 
 // AppendDNS adds new dns host names to the san list excluding duplicate entries.
-func (set *SANSet) AppendDNS(vals ...string) {
+func (sans *SANSet) AppendDNS(vals ...string) {
 OuterLoop:
 	for i := range vals {
 		vals[i] = strings.TrimSpace(vals[i])
-		for j := range set.dns {
-			if set.dns[j] == vals[i] {
+		for j := range sans.dns {
+			if sans.dns[j] == vals[i] {
 				continue OuterLoop
 			}
 		}
-		set.dns = append(set.dns, vals[i])
+		sans.dns = append(sans.dns, vals[i])
 	}
 }
 
@@ -266,7 +267,7 @@ func ParseDN(template pkix.Name, dn string, cn string) pkix.Name {
 // is clearly presented.
 var KnownOIDs = map[string][]int{
 	"LN": []int{2, 5, 4, 41},                //local name
-	"E":  []int{1, 2, 840, 113549, 1, 9, 1}, //email
+	"E":  []int{1, 2, 840, 113549, 1, 9, 1}, //emailAddress
 }
 
 // ParseOID converts a oid string (ie. "2.5.4.41") to an integer array
@@ -351,8 +352,9 @@ func SaveCert(dest PKIWriter, cert *x509.Certificate, path string) {
 
 // Save saves a certificate signing request and associated key to a PKIWwriter
 func (manifest *CSRFlags) Save(dest PKIWriter) {
-	SaveKey(dest, manifest.Key, manifest.Password, filepath.Join(manifest.Path, "key.pem"))
-	SaveCSR(dest, manifest.CertificateRequest.Raw, filepath.Join(manifest.Path, "csr.pem"))
+	baseName := filepath.Join(manifest.Path, filepath.Base(manifest.Path))
+	SaveKey(dest, manifest.Key, manifest.Password, baseName+"-key.pem")
+	SaveCSR(dest, manifest.CertificateRequest.Raw, baseName+"-csr.pem")
 }
 
 // SaveCSR saves
@@ -462,12 +464,6 @@ func DecryptPEM(block *pem.Block, pwd string) ([]byte, error) {
 	return x509.DecryptPEMBlock(block, []byte(pwd))
 }
 
-// HashKeyID hashes an ecdsa.PublicKey for use as a certificate Subject ID
-func HashKeyID(key *ecdsa.PublicKey) []byte {
-	hash := sha1.Sum(MarshalKeyBitString(key).RightAlign())
-	return hash[:]
-}
-
 // HashSHA256Fingerprint returns a sha-256 hash of a *x509.Certificate or
 // *x509.CertificateRequest
 func HashSHA256Fingerprint(entity interface{}) []byte {
@@ -517,6 +513,7 @@ func HashMD5Fingerprint(entity interface{}) []byte {
 }
 
 // MarshalKeyBitString extracts the asn1.BitString from the public key
+// this is what is hashed to create the SubjectKeyId
 func MarshalKeyBitString(key *ecdsa.PublicKey) asn1.BitString {
 	der, err := x509.MarshalPKIXPublicKey(key)
 	if err != nil {
@@ -531,4 +528,11 @@ func MarshalKeyBitString(key *ecdsa.PublicKey) asn1.BitString {
 		ErrorLog.Fatalf(`Failed to unmarshal public key asn.1 bitstring`)
 	}
 	return publicKeyInfo.PublicKey
+}
+
+// HashKeyID hashes an ecdsa.PublicKey for use as a certificate Subject ID
+// sha1 of the public key BitString is used per RFC recommendation
+func HashKeyID(key *ecdsa.PublicKey) []byte {
+	hash := sha1.Sum(MarshalKeyBitString(key).RightAlign())
+	return hash[:]
 }

@@ -76,7 +76,10 @@ func ParseCSRFlags(global *GlobalFlags) *CSRFlags {
 		Subject:   ParseDN(pkix.Name{}, *dn, *cn),
 		PublicKey: fs.Key.Public(),
 	}
-	sans := ParseSAN(*san, *cn, *local, *localhost)
+	sans := *ParseSANString(*san)
+	if *local || *localhost {
+		sans.AppendLocalSAN(*localhost)
+	}
 	fs.CertificateRequest.IPAddresses = sans.ip
 	fs.CertificateRequest.DNSNames = sans.dns
 	fs.CertificateRequest.EmailAddresses = sans.email
