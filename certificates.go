@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +16,7 @@ import (
 func init() {
 	Commands[`ca`] = &Command{
 		Description: `create a new private key and self-signed certificate authority`,
-		HelpString:  `TODO`,
+		HelpString:  `TODO`, // populated in ParseCertFlags error handler
 		Function: func(fs *GlobalFlags) {
 			certType := &CertType{
 				defaultValidity: 10 * (365 + 5),
@@ -22,13 +24,13 @@ func init() {
 				extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageOCSPSigning},
 				localSAN:        false,
 			}
-			manifest := CreateCertificate(fs.Args, certType)
+			manifest := CreateCertificate(fs, certType)
 			InfoLog.Printf("Finished creating ca certificate: %s\n", manifest.Path)
 		},
 	}
 	Commands[`ica`] = &Command{
 		Description: `create a new private key and self-signed intermediate certificate authority`,
-		HelpString:  `TODO`,
+		HelpString:  `TODO`, // populated in ParseCertFlags error handler
 		Function: func(fs *GlobalFlags) {
 			certType := &CertType{
 				command:         `ica`,
@@ -37,13 +39,13 @@ func init() {
 				extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageOCSPSigning},
 				localSAN:        false,
 			}
-			manifest := CreateCertificate(fs.Args, certType)
+			manifest := CreateCertificate(fs, certType)
 			InfoLog.Printf("Finished creating ica certificate: %s\n", manifest.Path)
 		},
 	}
 	Commands[`server`] = &Command{
 		Description: `create a new private key and server certificate`,
-		HelpString:  `TODO`,
+		HelpString:  `TODO`, // populated in ParseCertFlags error handler
 		Function: func(fs *GlobalFlags) {
 			certType := &CertType{
 				command:         `server`,
@@ -52,13 +54,13 @@ func init() {
 				extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 				localSAN:        true,
 			}
-			manifest := CreateCertificate(fs.Args, certType)
+			manifest := CreateCertificate(fs, certType)
 			InfoLog.Printf("Finished creating server certificate: %s\n", manifest.Path)
 		},
 	}
 	Commands[`client`] = &Command{
 		Description: `create a new private key and client certificate`,
-		HelpString:  `TODO`,
+		HelpString:  `TODO`, // populated in ParseCertFlags error handler
 		Function: func(fs *GlobalFlags) {
 			certType := &CertType{
 				command:         `client`,
@@ -67,13 +69,13 @@ func init() {
 				extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 				localSAN:        true,
 			}
-			manifest := CreateCertificate(fs.Args, certType)
+			manifest := CreateCertificate(fs, certType)
 			InfoLog.Printf("Finished creating client certificate: %s\n", manifest.Path)
 		},
 	}
 	Commands[`peer`] = &Command{
-		Description: `create a new private key and server certificate`,
-		HelpString:  `TODO`,
+		Description: `create a new private key and peer (server and client) certificate`,
+		HelpString:  `TODO`, // populated in ParseCertFlags error handler
 		Function: func(fs *GlobalFlags) {
 			certType := &CertType{
 				command:         `peer`,
@@ -82,13 +84,13 @@ func init() {
 				extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 				localSAN:        true,
 			}
-			manifest := CreateCertificate(fs.Args, certType)
+			manifest := CreateCertificate(fs, certType)
 			InfoLog.Printf("Finished creating peer certificate: %s\n", manifest.Path)
 		},
 	}
 	Commands[`signature`] = &Command{
-		Description: `create a new private key and server certificate`,
-		HelpString:  `TODO`,
+		Description: `create a new private key and digital signature certificate`,
+		HelpString:  `TODO`, // populated in ParseCertFlags error handler
 		Function: func(fs *GlobalFlags) {
 			certType := &CertType{
 				command:         `signature`,
@@ -96,7 +98,7 @@ func init() {
 				keyUsage:        x509.KeyUsageDigitalSignature,
 				localSAN:        false,
 			}
-			manifest := CreateCertificate(fs.Args, certType)
+			manifest := CreateCertificate(fs, certType)
 			InfoLog.Printf("Finished creating signature certificate: %s\n", manifest.Path)
 		},
 	}
@@ -124,12 +126,12 @@ type CertFlags struct {
 }
 
 // ParseCertFlags parses command line flags used to create a certificate
-func ParseCertFlags(args []string, certType *CertType) *CertFlags {
+func ParseCertFlags(global *GlobalFlags, certType *CertType) *CertFlags {
 	DebugLog.Println(`Parsing certificate flags`)
 	fs := CertFlags{FlagSet: *flag.NewFlagSet(`ca`, flag.ContinueOnError)}
 	fs.StringVar(&fs.SubjectPass, `subject-pass`, NilString, `password for the subject private key`)
 	fs.BoolVar(&fs.Describe, `describe`, true, `output description of created key and certificate`)
-	caPass := fs.String(`issuing-pass`, NilString, `password for the issuer private key`)
+	caPass := fs.String(`issuing-pass`, NilString, `the issuing private key password`)
 	csr := fs.String(`csr`, NilString, `create certificate from certificate signing request (file path or leave blank to use stdin)`)
 	dn := fs.String(`dn`, NilString, `subject distunguished name`)
 	cn := fs.String(`cn`, NilString, `common name (overrides "CN=" from "-dn" flag)`)
@@ -139,14 +141,22 @@ func ParseCertFlags(args []string, certType *CertType) *CertFlags {
 	localhost := fs.Bool(`localhost`, false, `same as -local but also include local hostname subject alternative name`)
 	inheritDN := fs.Bool(`inherit-dn`, true, `inherit distinguished name from issuing certificate before applying "-dn" argument`)
 	validity := fs.Int(`validity`, certType.defaultValidity, `validity of the certificate in days`)
-	if err := fs.Parse(args[1:]); err != nil {
+	help := fs.Bool(`help`, false, `show help message and exit`)
+	if err := fs.Parse(global.Args[1:]); err != nil || *help {
+		var buf bytes.Buffer
+		fs.SetOutput(&buf)
 		fs.PrintDefaults()
-		ErrorLog.Fatalf("Failed to parse command line flags: %s", strings.Join(args[1:], ` `))
+		global.Command.HelpString = buf.String()
+		if err != nil {
+			global.Command.PrintHelp(os.Stderr, fmt.Errorf("Failed to parse certificate command line options: %s", strings.Join(global.Args[1:], " ")))
+		} else {
+			global.Command.PrintHelp(os.Stdout, nil)
+		}
 	}
 	if len(fs.Args()) == 1 {
 		fs.Path = filepath.Clean(fs.Args()[0])
 	} else {
-		ErrorLog.Fatalf(`Failed to parse certificate path: %s`, strings.Join(args[1:], ` `))
+		ErrorLog.Fatalf(`Failed to parse certificate path: %s`, strings.Join(global.Args[1:], ` `))
 	}
 	isSelfSigned := filepath.Dir(fs.Path) == `.`
 	isCA := isSelfSigned || certType.command == `ca` || certType.command == `ica`
@@ -222,8 +232,8 @@ func ParseCertFlags(args []string, certType *CertType) *CertFlags {
 }
 
 // CreateCertificate creates a certificate given command args and a CertType
-func CreateCertificate(args []string, certType *CertType) *CertFlags {
-	manifest := ParseCertFlags(args, certType)
+func CreateCertificate(global *GlobalFlags, certType *CertType) *CertFlags {
+	manifest := ParseCertFlags(global, certType)
 	manifest.Sign()
 	manifest.Save(NewFileWriter())
 	if manifest.Describe {

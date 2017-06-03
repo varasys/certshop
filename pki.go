@@ -38,42 +38,6 @@ type SANSet struct {
 	dns   []string
 }
 
-// CertSet is the access point to the file backed certificate, request,
-// and keys persistance manager.
-type CertSet struct {
-	Path               string
-	certificate        *x509.Certificate
-	key                *ecdsa.PrivateKey
-	certificateRequest *x509.CertificateRequest
-}
-
-// Certificate return the x509.Certificate associated with the Path
-// The certificate file will be loaded if not already
-func (set *CertSet) Certificate() *x509.Certificate {
-	if set.certificate == nil && filepath.Base(set.Path) != "." {
-		set.certificate = ReadCert(filepath.Join(set.Path, filepath.Base(set.Path+".pem")))
-	}
-	return set.certificate
-}
-
-// Key return the ecdsa.PrivateKey associated with the Path
-// The key file will be loaded if not already
-func (set *CertSet) Key(pwd string) *ecdsa.PrivateKey {
-	if set.key == nil && filepath.Base(set.Path) != "." {
-		set.key = ReadKey(filepath.Join(set.Path, filepath.Base(set.Path+"-key.pem")), pwd)
-	}
-	return set.key
-}
-
-// CertificateRequest return the x509.CertificateRequest associated with the
-// Path. The certificate request file will be loaded if not already
-func (set *CertSet) CertificateRequest() *x509.CertificateRequest {
-	if set.certificateRequest == nil && filepath.Base(set.Path) != "." {
-		set.certificateRequest = ReadCSR(filepath.Join(set.Path, filepath.Base(set.Path+"-csr.pem")))
-	}
-	return set.certificateRequest
-}
-
 // ParseSAN parses a string listing the subject alternative names, along with
 // if cn != NilString the cn will be included as a DNS Name. If local is
 // true then "127.0.0.1,::1" will be included as ip addresses and "localhost"

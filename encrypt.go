@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"flag"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -11,7 +14,7 @@ func init() {
 		Description: `add/remove/change private key AES256 encryption password`,
 		HelpString:  `TODO`,
 		Function: func(fs *GlobalFlags) {
-			Encrypt(ParseEncryptFlags(fs.Args))
+			Encrypt(ParseEncryptFlags(fs))
 		},
 	}
 }
@@ -25,13 +28,22 @@ type EncryptFlags struct {
 }
 
 // ParseEncryptFlags parses command line options for the encrypt command
-func ParseEncryptFlags(args []string) *EncryptFlags {
+func ParseEncryptFlags(global *GlobalFlags) *EncryptFlags {
 	DebugLog.Println(`Parsing encrypt flags`)
 	fs := EncryptFlags{FlagSet: *flag.NewFlagSet(`ca`, flag.ContinueOnError)}
 	fs.StringVar(&fs.InPass, "in-pass", NilString, "Existing password")
 	fs.StringVar(&fs.OutPass, "out-pass", NilString, "New Password")
-	if err := fs.Parse(args[1:]); err != nil {
-		ErrorLog.Fatalf("Failed to parse encrypt command line options: %s", err)
+	help := fs.Bool(`help`, false, `show help message and exit`)
+	if err := fs.Parse(global.Args[1:]); err != nil || *help {
+		var buf bytes.Buffer
+		fs.SetOutput(&buf)
+		fs.PrintDefaults()
+		global.Command.HelpString = buf.String()
+		if err != nil {
+			global.Command.PrintHelp(os.Stderr, fmt.Errorf("Failed to parse encrypt command line options: %s", strings.Join(global.Args[1:], " ")))
+		} else {
+			global.Command.PrintHelp(os.Stdout, nil)
+		}
 	}
 	if len(fs.Args()) == 1 {
 		fs.Path = filepath.Clean(fs.Args()[0])

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -15,7 +16,7 @@ func init() {
 		Description: `export keys and certificates in .pem or .p12 format`,
 		HelpString:  `TODO`,
 		Function: func(fs *GlobalFlags) {
-			ExportCertificate(ParseExportFlags(fs.Args))
+			ExportCertificate(ParseExportFlags(fs))
 		},
 	}
 }
@@ -33,7 +34,7 @@ type ExportFlags struct {
 }
 
 // ParseExportFlags parses the command line flags for the "export" command
-func ParseExportFlags(args []string) *ExportFlags {
+func ParseExportFlags(global *GlobalFlags) *ExportFlags {
 	fs := ExportFlags{FlagSet: *flag.NewFlagSet("export", flag.ContinueOnError)}
 	fs.BoolVar(&fs.exportCrt, "export-crt", false, "export certificate")
 	fs.BoolVar(&fs.exportKey, "export-key", false, "export certificate")
@@ -42,9 +43,17 @@ func ParseExportFlags(args []string) *ExportFlags {
 	fs.StringVar(&fs.passIn, "pass-in", NilString, "existing private key password (only required if -exportFormat=\"p12\" and the key is encrypted)")
 	fs.StringVar(&fs.passOut, "pass-out", NilString, "pasword for exported private key (only required if -exportFormat=\"p12\")")
 	exportAll := fs.String("export-all", NilString, "shortcut for \"-export-crt -export-key -export-ca={path}\" where -export-ca={path} is only include if a path is provided")
-	if err := fs.Parse(args[1:]); err != nil {
+	help := fs.Bool(`help`, false, `show help message and exit`)
+	if err := fs.Parse(global.Args[1:]); err != nil || *help {
+		var buf bytes.Buffer
+		fs.SetOutput(&buf)
 		fs.PrintDefaults()
-		ErrorLog.Fatalf("Failed to parse export command line options: %s", strings.Join(args[1:], " "))
+		global.Command.HelpString = buf.String()
+		if err != nil {
+			global.Command.PrintHelp(os.Stderr, fmt.Errorf("Failed to parse export command line options: %s", strings.Join(global.Args[1:], " ")))
+		} else {
+			global.Command.PrintHelp(os.Stdout, nil)
+		}
 	}
 	switch len(fs.Args()) {
 	case 1:

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +17,7 @@ func init() {
 		Description: `create a new private key and certificate signing request`,
 		HelpString:  `TODO`,
 		Function: func(fs *GlobalFlags) {
-			manifest := ParseCSRFlags(fs.Args)
+			manifest := ParseCSRFlags(fs)
 			manifest.Sign()
 			manifest.Save(NewFileWriter())
 			if manifest.Describe {
@@ -41,7 +43,7 @@ type CSRFlags struct {
 
 // ParseCSRFlags parses command line flags used to create a certificate signing
 // request
-func ParseCSRFlags(args []string) *CSRFlags {
+func ParseCSRFlags(global *GlobalFlags) *CSRFlags {
 	DebugLog.Println(`Parsing certificate request flags`)
 	fs := CSRFlags{FlagSet: *flag.NewFlagSet(`csr`, flag.ContinueOnError)}
 	fs.StringVar(&fs.Password, `subjectpass`, NilString, `password for the subject private key`)
@@ -51,9 +53,17 @@ func ParseCSRFlags(args []string) *CSRFlags {
 	san := fs.String(`san`, NilString, `comma separated list of subject alternative names (ipv4, ipv6, dns or email)`)
 	local := fs.Bool(`local`, false, `include "127.0.0.1", "::1", and "localhost" in subject alternative names`)
 	localhost := fs.Bool(`localhost`, false, `same as -local but also include local hostname subject alternative name`)
-	if err := fs.Parse(args[1:]); err != nil {
+	help := fs.Bool(`help`, false, `show help message and exit`)
+	if err := fs.Parse(global.Args[1:]); err != nil || *help {
+		var buf bytes.Buffer
+		fs.SetOutput(&buf)
 		fs.PrintDefaults()
-		ErrorLog.Fatalf("Failed to parse certificate request command line options: %s", strings.Join(args[1:], " "))
+		global.Command.HelpString = buf.String()
+		if err != nil {
+			global.Command.PrintHelp(os.Stderr, fmt.Errorf("Failed to parse certificate request command line options: %s", strings.Join(global.Args[1:], " ")))
+		} else {
+			global.Command.PrintHelp(os.Stdout, nil)
+		}
 	}
 	if len(fs.Args()) == 1 {
 		fs.Path = filepath.Clean(fs.Args()[0])

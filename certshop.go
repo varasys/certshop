@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 	"time"
 )
 
@@ -55,7 +56,12 @@ func init() {
 
 func main() {
 	fs := ParseGlobalFlags()
-	fs.Command.Function(fs)
+	if fs.Command != nil {
+		fs.Command.Function(fs)
+	} else {
+		ErrorLog.Printf("Error parsing command: %s", strings.Join(os.Args, ` `))
+		printGlobalHelp(os.Stderr, fs)
+	}
 }
 
 // Command holds meta information about each command
@@ -75,6 +81,25 @@ func (command *Command) Name() string {
 	}
 	ErrorLog.Fatalf("Failed to lookup command name")
 	return ""
+}
+
+// PrintHelp prints a help message for a command
+func (command *Command) PrintHelp(writer *os.File, err error) {
+	if tmpl, err2 := template.New("help").Parse(`
+{{.Description}}
+
+command line flags:
+{{.HelpString}}
+`); err2 != nil {
+		ErrorLog.Fatalf("Failed to parse help template: %s", err2)
+	} else {
+		_ = tmpl.Execute(writer, command)
+		_ = writer.Sync()
+	}
+	if err != nil {
+		os.Exit(1)
+	}
+	os.Exit(0)
 }
 
 // GlobalFlags holds the global command line flags
@@ -97,7 +122,7 @@ func ParseGlobalFlags() *GlobalFlags {
 		printGlobalHelp(os.Stderr, &fs)
 		ErrorLog.Fatalf(`Failed to parse global flags: %s`, strings.Join(os.Args[1:], ` `))
 	}
-	if debug {
+	if fs.Debug {
 		DebugLog = log.New(os.Stderr, ``, log.Lshortfile)
 		ErrorLog.SetFlags(log.Lshortfile)
 	}

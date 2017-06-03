@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/x509"
@@ -24,7 +25,7 @@ func init() {
 		Description: `output private key, certificate and certificate request information`,
 		HelpString:  `TODO`,
 		Function: func(fs *GlobalFlags) {
-			flags := ParseDescribeFlags(fs.Args)
+			flags := ParseDescribeFlags(fs)
 			writer := NewDescribeWriter(os.Stdout)
 			writer.Describe(flags)
 			if err := writer.Flush(); err != nil {
@@ -82,15 +83,23 @@ type DescribeFlags struct {
 
 // ParseDescribeFlags parses command line options to the describe command
 // into a DescribeFlags struct
-func ParseDescribeFlags(args []string) *DescribeFlags {
+func ParseDescribeFlags(global *GlobalFlags) *DescribeFlags {
 	fs := DescribeFlags{FlagSet: *flag.NewFlagSet("describe", flag.ExitOnError)}
 	fs.StringVar(&fs.password, `password`, NilString, "private key password")
 	fs.BoolVar(&fs.key, "key", false, "display private keys")
 	fs.BoolVar(&fs.crt, "crt", false, "display certificates")
 	fs.BoolVar(&fs.csr, "csr", false, "display certificate signing requests")
-	if err := fs.Parse(args[1:]); err != nil {
+	help := fs.Bool(`help`, false, `show help message and exit`)
+	if err := fs.Parse(global.Args[1:]); err != nil || *help {
+		var buf bytes.Buffer
+		fs.SetOutput(&buf)
 		fs.PrintDefaults()
-		ErrorLog.Fatalf("Failed to parse command line options: %s", strings.Join(args[1:], " "))
+		global.Command.HelpString = buf.String()
+		if err != nil {
+			global.Command.PrintHelp(os.Stderr, fmt.Errorf("Failed to parse describe command line options: %s", strings.Join(global.Args[1:], " ")))
+		} else {
+			global.Command.PrintHelp(os.Stdout, nil)
+		}
 	}
 	fs.paths = fs.Args()
 	if !fs.key && !fs.crt && !fs.csr {
